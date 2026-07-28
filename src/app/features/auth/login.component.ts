@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/cor
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
 import { AuthService } from '../../core/auth.service';
+import { environment } from '../../../environments/environment';
 
 @Component({
   selector: 'app-login',
@@ -60,10 +61,12 @@ import { AuthService } from '../../core/auth.service';
             </button>
           </form>
 
-          <div class="demo-note">
-            <strong>Local preview</strong>
-            <span>Try <code>101</code> or <code>emergency-admin</code> with any password.</span>
-          </div>
+          @if (demoMode) {
+            <div class="demo-note">
+              <strong>Local preview</strong>
+              <span>Try <code>101</code> or <code>emergency-admin</code> with any password.</span>
+            </div>
+          }
           <p class="support-note">
             Password help is handled by the Emergency Administrator. There is no public recovery or
             registration.
@@ -81,6 +84,7 @@ export class LoginComponent {
   readonly loading = signal(false);
   readonly error = signal('');
   readonly showPassword = signal(false);
+  readonly demoMode = environment.demoMode;
   readonly form = this.fb.nonNullable.group({
     username: ['', [Validators.required, Validators.maxLength(64)]],
     password: ['', [Validators.required, Validators.minLength(1)]],

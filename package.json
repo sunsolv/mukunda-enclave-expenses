@@ -15,12 +15,13 @@
     "configure:production": "node scripts/configure-production.mjs",
     "import:excel": "node scripts/import-excel.mjs",
     "provision:accounts": "node scripts/provision-accounts.mjs",
+    "production:inspect": "node scripts/inspect-supabase-production.mjs",
     "security:verify": "node scripts/verify-supabase-security.mjs"
   },
   "private": true,
   "packageManager": "npm@10.9.2",
   "engines": {
-    "node": ">=20.19 <25"
+    "node": "^22.22.3 || ^24.15.0 || >=26.0.0"
   },
   "dependencies": {
     "@angular/common": "^22.0.0",

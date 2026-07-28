@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { writeFile } from 'node:fs/promises';
 import process from 'node:process';
+import { format } from 'prettier';
 
 const required = ['SUPABASE_URL', 'SUPABASE_ANON_KEY'];
 const missing = required.filter((name) => !process.env[name]?.trim());
@@ -28,6 +29,18 @@ if (supabaseUrl.protocol !== 'https:') {
   process.exit(1);
 }
 
+const placeholderPattern = /(^|[._-])(example|placeholder|your)([._-]|$)/i;
+if (placeholderPattern.test(supabaseUrl.hostname)) {
+  console.error('SUPABASE_URL contains a placeholder hostname.');
+  process.exit(1);
+}
+
+const publishableKey = process.env.SUPABASE_ANON_KEY.trim();
+if (publishableKey.length < 20 || /placeholder|your[_-]?anon|example/i.test(publishableKey)) {
+  console.error('SUPABASE_ANON_KEY is missing or contains a placeholder.');
+  process.exit(1);
+}
+
 const repositoryPath = '/mukunda-enclave-expenses/';
 const productionBaseUrl =
   process.env.PRODUCTION_BASE_URL?.trim() || `https://sunsolv.github.io${repositoryPath}`;
@@ -38,11 +51,12 @@ if (!githubPagesBasePath.startsWith('/') || !githubPagesBasePath.endsWith('/')) 
   process.exit(1);
 }
 
-const configuration = `export const environment = {
+const configuration = await format(
+  `export const environment = {
   production: true,
   appName: 'Mukunda Enclave',
   supabaseUrl: ${JSON.stringify(supabaseUrl.toString().replace(/\/$/, ''))},
-  supabaseAnonKey: ${JSON.stringify(process.env.SUPABASE_ANON_KEY.trim())},
+  supabaseAnonKey: ${JSON.stringify(publishableKey)},
   storageBucket: 'financial-documents',
   demoMode: false,
   baseUrl: ${JSON.stringify(githubPagesBasePath)},
@@ -50,7 +64,9 @@ const configuration = `export const environment = {
   productionBaseUrl: ${JSON.stringify(productionBaseUrl)},
   storageLimitBytes: 1024 * 1024 * 1024,
 };
-`;
+`,
+  { parser: 'typescript', printWidth: 100, singleQuote: true },
+);
 
 await writeFile(
   new URL('../src/environments/environment.production.ts', import.meta.url),

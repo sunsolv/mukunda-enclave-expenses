@@ -23,7 +23,7 @@ and require Supabase configuration. No real credentials or passwords are include
 
 ## Quick start
 
-Prerequisites: Node.js 20.19–24 and npm 10+.
+Prerequisites: Node.js 22.22.3+, 24.15.0+, or 26+ and npm 10+.
 
 ```bash
 npm ci

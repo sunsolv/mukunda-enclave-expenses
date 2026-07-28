@@ -1,0 +1,12 @@
+[
+  { "username": "flat101", "flatNumber": "101", "ownerName": "Owner 101", "role": "owner" },
+  { "username": "flat102", "flatNumber": "102", "ownerName": "Owner 102", "role": "owner" },
+  { "username": "flat201", "flatNumber": "201", "ownerName": "Owner 201", "role": "owner" },
+  { "username": "flat202", "flatNumber": "202", "ownerName": "Owner 202", "role": "owner" },
+  {
+    "username": "emergency-admin",
+    "flatNumber": null,
+    "ownerName": "Emergency Administrator",
+    "role": "emergency_admin"
+  }
+]

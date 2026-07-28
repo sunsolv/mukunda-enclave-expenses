@@ -1,0 +1,10 @@
+{
+  "name": "Mukunda Enclave – Maintenance & Expenses",
+  "short_name": "Mukunda Enclave",
+  "theme_color": "#0f766e",
+  "background_color": "#f8fafc",
+  "display": "standalone",
+  "scope": "./",
+  "start_url": "./#/dashboard",
+  "icons": []
+}

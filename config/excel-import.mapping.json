@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "displayDateFormat": "DD-MM-YYYY",
+  "aliases": {
+    "flatNumber": ["flat", "flat no", "flat number", "floor / flat", "floor or flat"],
+    "ownerName": ["owner", "owner name", "flat owner"],
+    "maintenanceAmount": ["maintenance", "maintenance amount", "amount collected", "collection"],
+    "billingMonth": ["month", "billing month", "maintenance month"],
+    "paymentDate": ["payment date", "collection date", "received date"],
+    "expenseDescription": ["expense description", "description", "particulars", "expense"],
+    "expenseDate": ["expense date", "date", "paid date"],
+    "vendorName": ["paid to", "vendor", "service provider", "payee"],
+    "vendorPhone": ["phone", "phone number", "mobile", "contact"],
+    "expenseAmount": ["amount paid", "expense amount", "paid amount"],
+    "paymentMode": ["payment mode", "mode"],
+    "transactionReference": ["transaction reference", "transaction id", "reference", "utr"],
+    "legacyDocumentUrl": ["receipt link", "google drive receipt link", "bill link", "drive link"],
+    "runningBalance": ["running balance", "balance", "available balance"]
+  },
+  "defaults": {
+    "expenseCategory": "Other",
+    "paymentMode": "other",
+    "timezone": "Asia/Kolkata",
+    "currency": "INR"
+  },
+  "knownBaseline": {
+    "label": "Previously reviewed July baseline",
+    "collections": 12000,
+    "expenses": 8649,
+    "closingBalance": 3351
+  }
+}

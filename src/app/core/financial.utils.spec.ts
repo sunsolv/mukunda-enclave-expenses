@@ -42,5 +42,18 @@ describe('financial utilities', () => {
     expect(
       fileValidationError(new File(['exe'], 'receipt.exe', { type: 'application/octet-stream' })),
     ).toContain('Only');
+    expect(
+      fileValidationError(new File(['not-pdf'], 'receipt.pdf', { type: 'image/jpeg' })),
+    ).toContain('Only');
+    expect(fileValidationError(new File([], 'empty.png', { type: 'image/png' }))).toContain(
+      'empty',
+    );
+    expect(
+      fileValidationError(
+        new File([new Uint8Array(5 * 1024 * 1024 + 1)], 'large.webp', {
+          type: 'image/webp',
+        }),
+      ),
+    ).toContain('5 MB');
   });
 });

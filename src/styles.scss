@@ -1128,6 +1128,22 @@ td.actions .small-button + .small-button {
   border: 0;
   background: transparent;
 }
+.selected-files {
+  margin-top: 8px;
+  display: grid;
+  gap: 6px;
+}
+.selected-files > span {
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--muted);
+  font-size: 0.65rem;
+}
 
 /* Reports / responsibility / records */
 .report-builder {

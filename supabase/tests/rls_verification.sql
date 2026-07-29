@@ -23,6 +23,50 @@ end $$;
 
 do $$
 begin
+  if has_function_privilege(
+    'anon',
+    'public.delete_expense(uuid,text)',
+    'execute'
+  ) or not has_function_privilege(
+    'authenticated',
+    'public.delete_expense(uuid,text)',
+    'execute'
+  ) then
+    raise exception 'Expense deletion RPC grants are invalid';
+  end if;
+  if has_function_privilege(
+    'authenticated',
+    'public.attach_staged_documents(public.document_entity_type,uuid,uuid,jsonb)',
+    'execute'
+  ) then
+    raise exception 'Internal document attachment helper must not be client-callable';
+  end if;
+end $$;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'storage'
+      and tablename = 'objects'
+      and policyname = 'financial_documents_delete_staging'
+      and roles @> array['authenticated']::name[]
+  ) then
+    raise exception 'Restricted staged-document cleanup policy is missing';
+  end if;
+  if exists (
+    select 1 from pg_policies
+    where schemaname = 'storage'
+      and tablename = 'objects'
+      and policyname like 'financial_documents%'
+      and roles @> array['anon']::name[]
+  ) then
+    raise exception 'Anonymous storage policy access is not allowed';
+  end if;
+end $$;
+
+do $$
+begin
   if not exists (
     select 1 from pg_indexes
     where schemaname = 'public'

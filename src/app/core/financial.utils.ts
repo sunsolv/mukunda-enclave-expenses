@@ -70,11 +70,17 @@ export function validateHandover(
 }
 
 export function fileValidationError(file: File): string | null {
-  const allowed = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
-  const extensions = ['jpg', 'jpeg', 'png', 'webp', 'pdf'];
   const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
-  if (!allowed.includes(file.type) || !extensions.includes(extension))
+  const compatibleTypes: Record<string, string[]> = {
+    jpg: ['image/jpeg'],
+    jpeg: ['image/jpeg'],
+    png: ['image/png'],
+    webp: ['image/webp'],
+    pdf: ['application/pdf'],
+  };
+  if (!compatibleTypes[extension]?.includes(file.type))
     return 'Only JPG, PNG, WebP and PDF files are allowed.';
+  if (file.size <= 0) return 'The selected file is empty.';
   if (file.size > 5 * 1024 * 1024) return 'The file must be 5 MB or smaller.';
   return null;
 }

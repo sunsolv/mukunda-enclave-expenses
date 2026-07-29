@@ -4,6 +4,7 @@ import { AuthService } from '../../core/auth.service';
 import { DataService } from '../../core/data.service';
 import { ExportService } from '../../core/export.service';
 import { fileValidationError, formatApartmentDate, formatInr } from '../../core/financial.utils';
+import { Expense } from '../../core/models';
 import { resolvedExpenseCategory } from '../../core/workflow.utils';
 
 @Component({
@@ -19,10 +20,13 @@ import { resolvedExpenseCategory } from '../../core/workflow.utils';
       <div class="header-actions">
         <button class="secondary" (click)="exportCsv()">Export register</button>
         @if (auth.canManage()) {
-          <button class="primary" (click)="showForm.set(true)">＋ Add expense</button>
+          <button class="primary" (click)="openCreate()">＋ Add expense</button>
         }
       </div>
     </header>
+    @if (notice()) {
+      <div class="alert" [class.error]="noticeError()">{{ notice() }}</div>
+    }
     <section class="mini-metrics">
       <div>
         <span>Approved</span><strong>{{ money(approvedTotal()) }}</strong>
@@ -88,6 +92,16 @@ import { resolvedExpenseCategory } from '../../core/workflow.utils';
                   <span class="badge" [class]="expense.status">{{ expense.status }}</span>
                 </td>
                 <td data-label="Actions" class="actions">
+                  @if (auth.canManage()) {
+                    <button
+                      type="button"
+                      class="small-button"
+                      [disabled]="deletingId() === expense.id"
+                      (click)="edit(expense)"
+                    >
+                      Edit
+                    </button>
+                  }
                   @if (expense.status === 'pending' && auth.canManage()) {
                     <button class="small-button success" (click)="review(expense.id, true)">
                       Approve</button
@@ -97,6 +111,16 @@ import { resolvedExpenseCategory } from '../../core/workflow.utils';
                   }
                   @if (expense.status !== 'cancelled' && auth.canManage()) {
                     <button class="small-button danger" (click)="cancel(expense.id)">Cancel</button>
+                  }
+                  @if (auth.canDeleteExpenses()) {
+                    <button
+                      type="button"
+                      class="small-button danger"
+                      [disabled]="deletingId() === expense.id"
+                      (click)="delete(expense)"
+                    >
+                      {{ deletingId() === expense.id ? 'Deleting…' : 'Delete' }}
+                    </button>
                   }
                 </td>
               </tr>
@@ -112,8 +136,8 @@ import { resolvedExpenseCategory } from '../../core/workflow.utils';
     @if (showForm()) {
       <div class="dialog-backdrop">
         <section class="dialog wide" role="dialog" aria-modal="true">
-          <p class="eyebrow">NEW SPEND</p>
-          <h2>Add expense</h2>
+          <p class="eyebrow">{{ isEditing() ? 'CORRECT SPEND' : 'NEW SPEND' }}</p>
+          <h2>{{ isEditing() ? 'Edit expense' : 'Add expense' }}</h2>
           <form [formGroup]="form" (ngSubmit)="save(true)">
             <div class="form-grid">
               <label>Expense date<input type="date" formControlName="expenseDate" /></label>
@@ -155,21 +179,59 @@ import { resolvedExpenseCategory } from '../../core/workflow.utils';
             </div>
             <label>Description<textarea formControlName="description" rows="2"></textarea></label>
             <label>Notes<textarea formControlName="notes" rows="2"></textarea></label>
+            @if (existingDocuments().length) {
+              <div class="upload-box">
+                <strong>Existing supporting document</strong>
+                @for (document of existingDocuments(); track document.id) {
+                  <button type="button" class="small-button" (click)="viewDocument(document.id)">
+                    {{ document.originalFilename }}
+                  </button>
+                }
+                <span>A selected replacement is linked only after the edit succeeds.</span>
+              </div>
+            }
             <label class="upload-box"
-              >Bills (optional)<input
+              >{{ isEditing() ? 'Replacement bill (optional)' : 'Bills (optional)' }}
+              <input
                 type="file"
                 multiple
                 accept=".jpg,.jpeg,.png,.webp,.pdf"
+                [disabled]="saving()"
                 (change)="filesSelected($event)"
               /><span>{{ fileLabel() }}</span></label
             >
+            @if (files().length) {
+              <div class="selected-files">
+                @for (file of files(); track $index) {
+                  <span>
+                    {{ file.name }}
+                    <button
+                      type="button"
+                      class="small-button"
+                      [disabled]="saving()"
+                      (click)="removeFile($index)"
+                    >
+                      Remove
+                    </button>
+                  </span>
+                }
+              </div>
+            }
             @if (message()) {
               <div class="alert error">{{ message() }}</div>
             }
             <div class="dialog-actions">
-              <button type="button" class="secondary" (click)="close()">Close</button
-              ><button type="button" class="secondary" (click)="save(false)">Save draft</button
-              ><button type="submit" class="primary">Submit</button>
+              <button type="button" class="secondary" [disabled]="saving()" (click)="close()">
+                Cancel
+              </button>
+              @if (!isEditing()) {
+                <button type="button" class="secondary" [disabled]="saving()" (click)="save(false)">
+                  Save draft
+                </button>
+              }
+              <button type="submit" class="primary" [disabled]="saving()">
+                {{ saving() ? 'Uploading and saving…' : isEditing() ? 'Save changes' : 'Submit' }}
+              </button>
             </div>
           </form>
         </section>
@@ -187,8 +249,15 @@ export class ExpensesComponent {
   readonly search = signal('');
   readonly status = signal('');
   readonly message = signal('');
+  readonly notice = signal('');
+  readonly noticeError = signal(false);
   readonly files = signal<File[]>([]);
   readonly isOther = signal(false);
+  readonly editingId = signal<string | null>(null);
+  readonly operationKey = signal('');
+  readonly saving = signal(false);
+  readonly deletingId = signal<string | null>(null);
+  readonly isEditing = computed(() => this.editingId() !== null);
   readonly categories = [
     'Security',
     'Housekeeping',
@@ -245,16 +314,56 @@ export class ExpensesComponent {
       .forEach((item) => totals.set(item.category, (totals.get(item.category) ?? 0) + item.amount));
     return [...totals.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? '—';
   });
+  readonly existingDocuments = computed(() => {
+    const expenseId = this.editingId();
+    return expenseId
+      ? this.data
+          .documents()
+          .filter((item) => item.entityType === 'expense' && item.entityId === expenseId)
+      : [];
+  });
   readonly fileLabel = computed(() =>
     this.files().length
       ? `${this.files().length} file(s) selected`
-      : 'JPG, PNG, WebP or PDF · maximum 5 MB each',
+      : 'JPG, PNG, WebP or PDF · maximum 5 MB each · up to 5 files',
   );
   money = formatInr;
   date = formatApartmentDate;
+
   label(value: string): string {
     return value.replaceAll('_', ' ');
   }
+
+  openCreate(): void {
+    this.resetForm();
+    this.editingId.set(null);
+    this.operationKey.set(crypto.randomUUID());
+    this.showForm.set(true);
+  }
+
+  edit(expense: Expense): void {
+    this.resetForm();
+    this.editingId.set(expense.id);
+    this.operationKey.set(crypto.randomUUID());
+    const category = expense.baseCategory ?? expense.category;
+    this.form.setValue({
+      expenseDate: expense.expenseDate,
+      category,
+      customCategory: expense.customCategory ?? '',
+      vendorName: expense.vendorName,
+      description: expense.description,
+      amount: expense.amount,
+      paymentMode: expense.paymentMode,
+      transactionReference: expense.transactionReference ?? '',
+      notes: expense.notes ?? '',
+    });
+    this.selectCategory(category);
+    if (expense.customCategory) {
+      this.form.controls.customCategory.setValue(expense.customCategory);
+    }
+    this.showForm.set(true);
+  }
+
   selectCategory(category: string): void {
     const control = this.form.controls.customCategory;
     this.isOther.set(category === 'Other');
@@ -266,40 +375,73 @@ export class ExpensesComponent {
     }
     control.updateValueAndValidity();
   }
+
   filesSelected(event: Event): void {
-    const files = [...((event.target as HTMLInputElement).files ?? [])];
+    const input = event.target as HTMLInputElement;
+    const files = [...(input.files ?? [])];
+    if (files.length > 5) {
+      this.message.set('Attach no more than five documents.');
+      this.files.set([]);
+      input.value = '';
+      return;
+    }
     const error = files.map(fileValidationError).find(Boolean);
     if (error) {
       this.message.set(error);
       this.files.set([]);
+      input.value = '';
       return;
     }
     this.message.set('');
     this.files.set(files);
   }
+
+  removeFile(index: number): void {
+    this.files.update((items) => items.filter((_, itemIndex) => itemIndex !== index));
+  }
+
   async save(submit: boolean): Promise<void> {
+    if (this.saving()) return;
     if (this.form.invalid) {
       this.form.markAllAsTouched();
       this.message.set('Complete every required field.');
       return;
     }
+    this.saving.set(true);
+    this.message.set('');
     try {
       const value = this.form.getRawValue();
-      const expenseId = await this.data.addExpense(
-        {
-          ...value,
-          ...resolvedExpenseCategory(value.category, value.customCategory),
-        },
-        submit,
-      );
-      for (const file of this.files()) {
-        await this.data.uploadDocument(file, 'expense', expenseId, 'expense_bill');
+      const expense = {
+        ...value,
+        ...resolvedExpenseCategory(value.category, value.customCategory),
+      };
+      if (this.editingId()) {
+        await this.data.updateExpense(
+          this.editingId()!,
+          expense,
+          this.files(),
+          this.operationKey(),
+        );
+        this.notice.set('Expense updated. Totals and reports now use the corrected values.');
+      } else {
+        await this.data.submitExpense(expense, submit, this.files(), this.operationKey());
+        this.notice.set(
+          submit
+            ? this.files().length
+              ? 'Expense submitted successfully with its private document.'
+              : 'Expense submitted successfully.'
+            : 'Expense draft saved successfully.',
+        );
       }
+      this.noticeError.set(false);
       this.close();
     } catch (error) {
       this.message.set(error instanceof Error ? error.message : 'Unable to save expense.');
+    } finally {
+      this.saving.set(false);
     }
   }
+
   async review(id: string, approve: boolean): Promise<void> {
     const reason = approve
       ? undefined
@@ -310,6 +452,7 @@ export class ExpensesComponent {
       window.alert(error instanceof Error ? error.message : 'Review failed.');
     }
   }
+
   async cancel(id: string): Promise<void> {
     const reason = window.prompt('Enter the mandatory cancellation reason:') ?? '';
     try {
@@ -318,17 +461,52 @@ export class ExpensesComponent {
       window.alert(error instanceof Error ? error.message : 'Cancellation failed.');
     }
   }
+
+  async delete(expense: Expense): Promise<void> {
+    const identity = `${this.date(expense.expenseDate)} · ${expense.vendorName} · ${this.money(expense.amount)}`;
+    if (!window.confirm(`Delete this expense from normal financial records?\n${identity}`)) return;
+    const reason = window.prompt('Enter the mandatory deletion reason:') ?? '';
+    if (!reason) return;
+    this.deletingId.set(expense.id);
+    try {
+      await this.data.deleteExpense(expense.id, reason);
+      this.noticeError.set(false);
+      this.notice.set(`Expense deleted from normal records: ${identity}`);
+    } catch (error) {
+      this.noticeError.set(true);
+      this.notice.set(error instanceof Error ? error.message : 'Deletion failed.');
+    } finally {
+      this.deletingId.set(null);
+    }
+  }
+
+  async viewDocument(documentId: string): Promise<void> {
+    try {
+      const url = await this.data.signedDocumentUrl(documentId);
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (error) {
+      this.message.set(error instanceof Error ? error.message : 'Unable to open document.');
+    }
+  }
+
   async exportCsv(): Promise<void> {
     await this.exports.downloadCsv(
       'mukunda-enclave-expenses',
       this.exports.expenseRows(this.filtered()),
     );
   }
+
   close(): void {
     this.showForm.set(false);
+    this.resetForm();
+  }
+
+  private resetForm(): void {
     this.message.set('');
     this.files.set([]);
     this.isOther.set(false);
+    this.editingId.set(null);
+    this.operationKey.set('');
     this.form.reset({
       expenseDate: new Date().toISOString().slice(0, 10),
       category: 'Security',

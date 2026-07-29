@@ -28,6 +28,7 @@ export class AuthService {
     const profile = this.profileState();
     return profile?.role === 'emergency_admin' || profile?.isCurrentAdmin === true;
   });
+  readonly canDeleteExpenses = computed(() => this.profileState()?.role === 'emergency_admin');
   readonly supabase: SupabaseClient | null =
     environment.supabaseUrl && environment.supabaseAnonKey
       ? createClient(environment.supabaseUrl, environment.supabaseAnonKey, {

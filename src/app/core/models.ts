@@ -72,6 +72,8 @@ export interface Expense {
   transactionReference?: string;
   notes?: string;
   rejectionReason?: string;
+  updatedAt?: string;
+  updatedBy?: string;
 }
 
 export interface Responsibility {
@@ -118,4 +120,12 @@ export interface DocumentRecord {
   sizeBytes: number;
   legacyDocumentUrl?: string;
   createdAt: string;
+}
+
+export interface StagedDocument {
+  storage_path: string;
+  original_filename: string;
+  stored_filename: string;
+  mime_type: string;
+  size_bytes: number;
 }

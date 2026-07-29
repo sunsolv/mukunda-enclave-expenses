@@ -1,6 +1,6 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { AuthService } from './auth.service';
-import { calculateClosingBalance } from './financial.utils';
+import { calculateClosingBalance, fileValidationError } from './financial.utils';
 import {
   AuditEntry,
   DashboardSummary,
@@ -10,6 +10,7 @@ import {
   MaintenanceCharge,
   Payment,
   Responsibility,
+  StagedDocument,
 } from './models';
 
 const today = new Date();
@@ -19,6 +20,7 @@ const date = (day: number) => `${month}-${String(day).padStart(2, '0')}`;
 @Injectable({ providedIn: 'root' })
 export class DataService {
   private readonly auth = inject(AuthService);
+  private readonly demoOperationIds = new Map<string, string>();
   readonly loading = signal(false);
   readonly loadError = signal('');
   readonly flats = signal<Flat[]>([
@@ -314,8 +316,9 @@ export class DataService {
         this.auth.supabase
           .from('expenses')
           .select(
-            'id,expense_date,vendor_name,description,amount,payment_mode,transaction_reference,status,notes,rejection_reason,other_category,expense_categories(name)',
+            'id,expense_date,vendor_name,description,amount,payment_mode,transaction_reference,status,notes,rejection_reason,other_category,updated_at,updated_by,expense_categories(name)',
           )
+          .is('deleted_at', null)
           .order('expense_date', { ascending: false }),
         this.auth.supabase
           .from('maintenance_responsibilities')
@@ -412,6 +415,8 @@ export class DataService {
             transactionReference: item.transaction_reference ?? undefined,
             notes: item.notes ?? undefined,
             rejectionReason: item.rejection_reason ?? undefined,
+            updatedAt: item.updated_at ?? undefined,
+            updatedBy: item.updated_by ?? undefined,
           };
         }),
       );
@@ -604,12 +609,204 @@ export class DataService {
     return expenseId;
   }
 
+  async submitExpense(
+    expense: Omit<Expense, 'id' | 'status'>,
+    submit: boolean,
+    files: File[],
+    submissionKey: string,
+  ): Promise<string> {
+    this.assertManager();
+    this.assertValidDocuments(files);
+    if (!this.auth.supabase) {
+      const existingId = this.demoOperationIds.get(`expense:${submissionKey}`);
+      if (existingId) return existingId;
+      const expenseId = await this.addExpense(expense, submit);
+      for (const file of files) {
+        await this.uploadDocument(file, 'expense', expenseId, 'expense_bill');
+      }
+      this.demoOperationIds.set(`expense:${submissionKey}`, expenseId);
+      return expenseId;
+    }
+
+    const staged = await this.stageDocuments(files, submissionKey);
+    let data: string | null = null;
+    let error: unknown;
+    try {
+      const result = await this.auth.supabase.rpc('submit_expense_with_documents', {
+        p_expense_date: expense.expenseDate,
+        p_category_name: expense.baseCategory ?? expense.category,
+        p_other_category: expense.customCategory || null,
+        p_vendor_name: expense.vendorName,
+        p_description: expense.description,
+        p_amount: expense.amount,
+        p_payment_mode: expense.paymentMode,
+        p_transaction_reference: expense.transactionReference || null,
+        p_notes: expense.notes || null,
+        p_submit: submit,
+        p_submission_key: submissionKey,
+        p_documents: staged,
+      });
+      data = result.data as string | null;
+      error = result.error;
+    } catch (caught) {
+      error = caught;
+    }
+    const expenseId = await this.resolveDocumentOperation(
+      'expense',
+      submissionKey,
+      data,
+      error,
+      staged,
+      'Unable to save expense.',
+    );
+    await this.refresh();
+    return expenseId;
+  }
+
+  async submitPayment(
+    payment: Omit<Payment, 'id' | 'receiptNumber' | 'verificationStatus' | 'flatNumber'>,
+    file: File | null,
+    submissionKey: string,
+  ): Promise<string> {
+    this.assertValidDocuments(file ? [file] : []);
+    if (!this.auth.supabase) {
+      const existingId = this.demoOperationIds.get(`payment:${submissionKey}`);
+      if (existingId) return existingId;
+      const paymentId = await this.addPayment(payment);
+      if (file) {
+        await this.uploadDocument(file, 'payment', paymentId, 'payment_proof');
+      }
+      this.demoOperationIds.set(`payment:${submissionKey}`, paymentId);
+      return paymentId;
+    }
+
+    const staged = await this.stageDocuments(file ? [file] : [], submissionKey);
+    let data: string | null = null;
+    let error: unknown;
+    try {
+      const result = await this.auth.supabase.rpc('submit_payment_with_document', {
+        p_charge_id: payment.maintenanceChargeId,
+        p_amount: payment.amount,
+        p_payment_date: payment.paymentDate,
+        p_payment_mode: payment.paymentMode,
+        p_transaction_reference: payment.transactionReference || null,
+        p_notes: payment.notes || null,
+        p_submission_key: submissionKey,
+        p_documents: staged,
+      });
+      data = result.data as string | null;
+      error = result.error;
+    } catch (caught) {
+      error = caught;
+    }
+    const paymentId = await this.resolveDocumentOperation(
+      'payment',
+      submissionKey,
+      data,
+      error,
+      staged,
+      'Unable to save payment.',
+    );
+    await this.refresh();
+    return paymentId;
+  }
+
+  async updateExpense(
+    expenseId: string,
+    expense: Omit<Expense, 'id' | 'status'>,
+    replacementFiles: File[],
+    editKey: string,
+  ): Promise<void> {
+    this.assertManager();
+    this.assertValidDocuments(replacementFiles);
+    if (!this.auth.supabase) {
+      const existing = this.expenses().find((item) => item.id === expenseId);
+      if (!existing) throw new Error('Expense not found.');
+      this.expenses.update((items) =>
+        items.map((item) =>
+          item.id === expenseId
+            ? {
+                ...item,
+                ...expense,
+                category: expense.customCategory || expense.category,
+                updatedAt: new Date().toISOString(),
+                updatedBy: this.auth.profile()?.id,
+              }
+            : item,
+        ),
+      );
+      if (replacementFiles.length) {
+        this.documents.update((items) =>
+          items.filter((item) => !(item.entityType === 'expense' && item.entityId === expenseId)),
+        );
+        for (const file of replacementFiles) {
+          await this.uploadDocument(file, 'expense', expenseId, 'expense_bill');
+        }
+      }
+      this.audit('expense.updated', 'expense', expenseId);
+      return;
+    }
+
+    const staged = await this.stageDocuments(replacementFiles, editKey);
+    let data: string | null = null;
+    let error: unknown;
+    try {
+      const result = await this.auth.supabase.rpc('update_expense_with_document', {
+        p_expense_id: expenseId,
+        p_expense_date: expense.expenseDate,
+        p_category_name: expense.baseCategory ?? expense.category,
+        p_other_category: expense.customCategory || null,
+        p_vendor_name: expense.vendorName,
+        p_description: expense.description,
+        p_amount: expense.amount,
+        p_payment_mode: expense.paymentMode,
+        p_transaction_reference: expense.transactionReference || null,
+        p_notes: expense.notes || null,
+        p_edit_key: editKey,
+        p_documents: staged,
+      });
+      data = result.data as string | null;
+      error = result.error;
+    } catch (caught) {
+      error = caught;
+    }
+    await this.resolveDocumentOperation(
+      'expense',
+      editKey,
+      data,
+      error,
+      staged,
+      'Unable to update expense.',
+    );
+    await this.refresh();
+  }
+
+  async deleteExpense(expenseId: string, reason: string): Promise<void> {
+    this.assertEmergencyAdmin('Only the Emergency Administrator can delete expenses.');
+    if (reason.trim().length < 3) throw new Error('A deletion reason is required.');
+    if (this.auth.supabase) {
+      const { error } = await this.auth.supabase.rpc('delete_expense', {
+        p_expense_id: expenseId,
+        p_reason: reason.trim(),
+      });
+      if (error) throw error;
+      await this.refresh();
+      return;
+    }
+    const existing = this.expenses().find((item) => item.id === expenseId);
+    if (!existing) throw new Error('Expense not found.');
+    this.expenses.update((items) => items.filter((item) => item.id !== expenseId));
+    this.audit('expense.deleted', 'expense', expenseId, reason.trim());
+  }
+
   async uploadDocument(
     file: File,
     entityType: 'payment' | 'expense',
     entityId: string,
     documentType: 'payment_proof' | 'expense_bill',
   ): Promise<void> {
+    const validationError = this.documentValidationError(file);
+    if (validationError) throw new Error(validationError);
     if (!this.auth.supabase) {
       this.documents.update((items) => [
         {
@@ -625,10 +822,7 @@ export class DataService {
       ]);
       return;
     }
-    const extension = file.name.split('.').pop()?.toLowerCase();
-    if (!extension || !['jpg', 'jpeg', 'png', 'webp', 'pdf'].includes(extension)) {
-      throw new Error('Unsupported document extension.');
-    }
+    const extension = file.name.split('.').pop()!.toLowerCase();
     const now = new Date();
     const storedFilename = `${crypto.randomUUID()}.${extension}`;
     const storagePath = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, '0')}/${entityType}/${entityId}/${storedFilename}`;
@@ -655,7 +849,6 @@ export class DataService {
       await this.auth.supabase.rpc('discard_failed_document', { p_document_id: document.id });
       throw uploadError;
     }
-    await this.refresh();
   }
 
   async approveExpense(expenseId: string, approve: boolean, reason?: string): Promise<void> {
@@ -754,6 +947,28 @@ export class DataService {
       });
     }
     return downloads;
+  }
+
+  async signedDocumentUrl(documentId: string): Promise<string> {
+    if (!this.auth.supabase) {
+      throw new Error('Document preview requires Supabase configuration.');
+    }
+    const { data: document, error } = await this.auth.supabase
+      .from('documents')
+      .select('storage_path')
+      .eq('id', documentId)
+      .is('deleted_at', null)
+      .single();
+    if (error || !document?.storage_path) {
+      throw new Error('The document is unavailable or you are not authorized to view it.');
+    }
+    const { data, error: signedError } = await this.auth.supabase.storage
+      .from('financial-documents')
+      .createSignedUrl(document.storage_path, 120);
+    if (signedError || !data.signedUrl) {
+      throw new Error('Unable to create a secure document link.');
+    }
+    return data.signedUrl;
   }
 
   async completeHandover(
@@ -871,6 +1086,110 @@ export class DataService {
     return this.documents().reduce((total, item) => total + item.sizeBytes, 0);
   }
 
+  private async stageDocuments(files: File[], operationKey: string): Promise<StagedDocument[]> {
+    if (!this.auth.supabase || files.length === 0) return [];
+    this.assertValidDocuments(files);
+    const userId = this.auth.profile()?.id;
+    if (!userId) throw new Error('Your session has expired. Sign in again.');
+
+    const staged: StagedDocument[] = [];
+    const attemptedPaths: string[] = [];
+    try {
+      for (const file of files) {
+        const extension = file.name.split('.').pop()!.toLowerCase();
+        const storedFilename = `${crypto.randomUUID()}.${extension}`;
+        const storagePath = `staging/${userId}/${operationKey}/${storedFilename}`;
+        attemptedPaths.push(storagePath);
+        const { error } = await this.auth.supabase.storage
+          .from('financial-documents')
+          .upload(storagePath, file, {
+            contentType: file.type,
+            upsert: false,
+          });
+        if (error) throw error;
+        staged.push({
+          storage_path: storagePath,
+          original_filename: file.name,
+          stored_filename: storedFilename,
+          mime_type: file.type,
+          size_bytes: file.size,
+        });
+      }
+      return staged;
+    } catch (error) {
+      await this.cleanupStagedDocuments(attemptedPaths);
+      throw new Error(this.errorMessage(error, 'Document upload failed. No record was created.'), {
+        cause: error,
+      });
+    }
+  }
+
+  private async resolveDocumentOperation(
+    entityType: 'payment' | 'expense',
+    operationKey: string,
+    data: string | null,
+    error: unknown,
+    staged: StagedDocument[],
+    fallback: string,
+  ): Promise<string> {
+    if (!error && data) return data;
+    if (!this.auth.supabase) throw new Error(fallback);
+
+    let resolution;
+    try {
+      resolution = await this.auth.supabase.rpc('resolve_document_submission', {
+        p_entity_type: entityType,
+        p_operation_key: operationKey,
+      });
+    } catch (caught) {
+      throw new Error(
+        'The submission status could not be confirmed. Retry once; the operation key prevents duplicates.',
+        { cause: caught },
+      );
+    }
+    if (resolution.error) {
+      throw new Error(
+        'The submission status could not be confirmed. Retry once; the operation key prevents duplicates.',
+      );
+    }
+    if (resolution.data) return resolution.data as string;
+    await this.cleanupStagedDocuments(staged.map((item) => item.storage_path));
+    throw new Error(this.errorMessage(error, fallback));
+  }
+
+  private async cleanupStagedDocuments(paths: string[]): Promise<void> {
+    if (!this.auth.supabase || paths.length === 0) return;
+    try {
+      await this.auth.supabase.storage.from('financial-documents').remove(paths);
+    } catch {
+      // Cleanup is best-effort; the original upload/database error is more useful.
+    }
+  }
+
+  private documentValidationError(file: File): string | null {
+    return fileValidationError(file);
+  }
+
+  private assertValidDocuments(files: File[]): void {
+    if (files.length > 5) throw new Error('Attach no more than five documents.');
+    for (const file of files) {
+      const error = this.documentValidationError(file);
+      if (error) throw new Error(error);
+    }
+  }
+
+  private errorMessage(error: unknown, fallback: string): string {
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'message' in error &&
+      typeof error.message === 'string'
+    ) {
+      return error.message;
+    }
+    return fallback;
+  }
+
   private recalculateCharge(chargeId: string): void {
     const paid = this.payments()
       .filter(
@@ -914,9 +1233,11 @@ export class DataService {
       throw new Error('Only the Current Maintenance Administrator can perform this action.');
   }
 
-  private assertEmergencyAdmin(): void {
+  private assertEmergencyAdmin(
+    message = 'Only the Emergency Administrator can edit owner details.',
+  ): void {
     if (this.auth.profile()?.role !== 'emergency_admin') {
-      throw new Error('Only the Emergency Administrator can edit owner details.');
+      throw new Error(message);
     }
   }
 }

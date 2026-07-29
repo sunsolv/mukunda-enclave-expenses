@@ -16,8 +16,11 @@ import { outstandingCharges } from '../../core/workflow.utils';
         <h1>Payments & receipts</h1>
         <p class="muted">Record payment proofs, verify collections, and issue official receipts.</p>
       </div>
-      <button class="primary" (click)="showForm.set(true)">＋ Record payment</button>
+      <button class="primary" (click)="openForm()">＋ Record payment</button>
     </header>
+    @if (notice()) {
+      <div class="alert">{{ notice() }}</div>
+    }
     <section class="panel table-panel">
       <div class="table-toolbar">
         <div>
@@ -152,16 +155,30 @@ import { outstandingCharges } from '../../core/workflow.utils';
               <input
                 type="file"
                 accept=".jpg,.jpeg,.png,.webp,.pdf"
+                [disabled]="submitting()"
                 (change)="fileSelected($event)"
               />
               <span>{{ selectedFile()?.name ?? 'JPG, PNG, WebP or PDF · maximum 5 MB' }}</span>
             </label>
+            @if (selectedFile()) {
+              <button
+                type="button"
+                class="small-button"
+                [disabled]="submitting()"
+                (click)="removeFile()"
+              >
+                Remove selected proof
+              </button>
+            }
             @if (message()) {
               <div class="alert" [class.error]="failed()">{{ message() }}</div>
             }
             <div class="dialog-actions">
-              <button type="button" class="secondary" (click)="close()">Cancel</button
-              ><button type="submit" class="primary">Submit</button>
+              <button type="button" class="secondary" [disabled]="submitting()" (click)="close()">
+                Cancel</button
+              ><button type="submit" class="primary" [disabled]="submitting()">
+                {{ submitting() ? 'Uploading and saving…' : 'Submit' }}
+              </button>
             </div>
           </form>
         </section>
@@ -179,9 +196,12 @@ export class PaymentsComponent {
   readonly search = signal('');
   readonly status = signal('');
   readonly message = signal('');
+  readonly notice = signal('');
   readonly failed = signal(false);
   readonly selectedFile = signal<File | null>(null);
   readonly selectedFlatId = signal('');
+  readonly submitting = signal(false);
+  readonly operationKey = signal('');
   readonly form = this.fb.nonNullable.group({
     flatId: ['', Validators.required],
     maintenanceChargeId: ['', Validators.required],
@@ -216,23 +236,34 @@ export class PaymentsComponent {
   label(value: string): string {
     return value.replaceAll('_', ' ');
   }
+  openForm(): void {
+    this.operationKey.set(crypto.randomUUID());
+    this.showForm.set(true);
+  }
   selectFlat(flatId: string): void {
     this.selectedFlatId.set(flatId);
     this.form.controls.maintenanceChargeId.setValue('');
   }
   fileSelected(event: Event): void {
-    const file = (event.target as HTMLInputElement).files?.[0] ?? null;
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0] ?? null;
     const error = file ? fileValidationError(file) : null;
     if (error) {
       this.failed.set(true);
       this.message.set(error);
       this.selectedFile.set(null);
+      input.value = '';
       return;
     }
     this.message.set('');
     this.selectedFile.set(file);
   }
+  removeFile(): void {
+    this.selectedFile.set(null);
+    this.message.set('');
+  }
   async save(): Promise<void> {
+    if (this.submitting()) return;
     if (this.form.invalid) {
       this.form.markAllAsTouched();
       this.failed.set(true);
@@ -246,17 +277,22 @@ export class PaymentsComponent {
       this.message.set('Amount cannot exceed the outstanding charge balance.');
       return;
     }
+    this.submitting.set(true);
+    this.message.set('');
     try {
-      const paymentId = await this.data.addPayment(value);
-      if (this.selectedFile()) {
-        await this.data.uploadDocument(this.selectedFile()!, 'payment', paymentId, 'payment_proof');
-      }
+      await this.data.submitPayment(value, this.selectedFile(), this.operationKey());
       this.failed.set(false);
-      this.message.set('Payment saved for verification. The proof is stored privately.');
-      setTimeout(() => this.close(), 900);
+      this.notice.set(
+        this.selectedFile()
+          ? 'Payment saved once for verification. The proof is stored privately.'
+          : 'Payment saved once for verification.',
+      );
+      this.close();
     } catch (error) {
       this.failed.set(true);
       this.message.set(error instanceof Error ? error.message : 'Unable to save payment.');
+    } finally {
+      this.submitting.set(false);
     }
   }
   async review(id: string, approve: boolean): Promise<void> {
@@ -288,6 +324,7 @@ export class PaymentsComponent {
     this.message.set('');
     this.selectedFile.set(null);
     this.selectedFlatId.set('');
+    this.operationKey.set('');
     this.form.reset({
       paymentDate: new Date().toISOString().slice(0, 10),
       amount: 0,

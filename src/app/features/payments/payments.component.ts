@@ -4,6 +4,7 @@ import { AuthService } from '../../core/auth.service';
 import { DataService } from '../../core/data.service';
 import { ExportService } from '../../core/export.service';
 import { fileValidationError, formatApartmentDate, formatInr } from '../../core/financial.utils';
+import { outstandingCharges } from '../../core/workflow.utils';
 
 @Component({
   selector: 'app-payments',
@@ -107,7 +108,10 @@ import { fileValidationError, formatApartmentDate, formatInr } from '../../core/
           <form [formGroup]="form" (ngSubmit)="save()">
             <div class="form-grid">
               <label
-                >Flat<select formControlName="flatId" (change)="selectFlat()">
+                >Flat<select
+                  formControlName="flatId"
+                  (change)="selectFlat($any($event.target).value)"
+                >
                   <option value="">Select flat</option>
                   @for (flat of allowedFlats(); track flat.id) {
                     <option [value]="flat.id">{{ flat.flatNumber }} · {{ flat.ownerName }}</option>
@@ -157,7 +161,7 @@ import { fileValidationError, formatApartmentDate, formatInr } from '../../core/
             }
             <div class="dialog-actions">
               <button type="button" class="secondary" (click)="close()">Cancel</button
-              ><button type="submit" class="primary">Save as pending</button>
+              ><button type="submit" class="primary">Submit</button>
             </div>
           </form>
         </section>
@@ -177,6 +181,7 @@ export class PaymentsComponent {
   readonly message = signal('');
   readonly failed = signal(false);
   readonly selectedFile = signal<File | null>(null);
+  readonly selectedFlatId = signal('');
   readonly form = this.fb.nonNullable.group({
     flatId: ['', Validators.required],
     maintenanceChargeId: ['', Validators.required],
@@ -192,14 +197,7 @@ export class PaymentsComponent {
       : this.data.flats().filter((flat) => flat.id === this.auth.profile()?.flatId),
   );
   readonly outstanding = computed(() =>
-    this.data
-      .charges()
-      .filter(
-        (item) =>
-          item.flatId === this.form.controls.flatId.value &&
-          item.balanceAmount > 0 &&
-          item.status !== 'cancelled',
-      ),
+    outstandingCharges(this.data.charges(), this.selectedFlatId()),
   );
   readonly filtered = computed(() => {
     const query = this.search().trim().toLowerCase();
@@ -218,7 +216,8 @@ export class PaymentsComponent {
   label(value: string): string {
     return value.replaceAll('_', ' ');
   }
-  selectFlat(): void {
+  selectFlat(flatId: string): void {
+    this.selectedFlatId.set(flatId);
     this.form.controls.maintenanceChargeId.setValue('');
   }
   fileSelected(event: Event): void {
@@ -288,6 +287,7 @@ export class PaymentsComponent {
     this.showForm.set(false);
     this.message.set('');
     this.selectedFile.set(null);
+    this.selectedFlatId.set('');
     this.form.reset({
       paymentDate: new Date().toISOString().slice(0, 10),
       amount: 0,

@@ -4,6 +4,7 @@ import { AuthService } from '../../core/auth.service';
 import { DataService } from '../../core/data.service';
 import { ExportService } from '../../core/export.service';
 import { fileValidationError, formatApartmentDate, formatInr } from '../../core/financial.utils';
+import { resolvedExpenseCategory } from '../../core/workflow.utils';
 
 @Component({
   selector: 'app-expenses',
@@ -117,12 +118,23 @@ import { fileValidationError, formatApartmentDate, formatInr } from '../../core/
             <div class="form-grid">
               <label>Expense date<input type="date" formControlName="expenseDate" /></label>
               <label
-                >Category<select formControlName="category">
+                >Category<select
+                  formControlName="category"
+                  (change)="selectCategory($any($event.target).value)"
+                >
                   @for (category of categories; track category) {
                     <option>{{ category }}</option>
                   }
                 </select></label
               >
+              @if (isOther()) {
+                <label
+                  >Other category<input
+                    formControlName="customCategory"
+                    maxlength="120"
+                    placeholder="Enter expense category"
+                /></label>
+              }
               <label
                 >Vendor / service provider<input formControlName="vendorName" maxlength="120"
               /></label>
@@ -155,8 +167,9 @@ import { fileValidationError, formatApartmentDate, formatInr } from '../../core/
               <div class="alert error">{{ message() }}</div>
             }
             <div class="dialog-actions">
-              <button type="button" class="secondary" (click)="save(false)">Save draft</button
-              ><button type="submit" class="primary">Submit for approval</button>
+              <button type="button" class="secondary" (click)="close()">Close</button
+              ><button type="button" class="secondary" (click)="save(false)">Save draft</button
+              ><button type="submit" class="primary">Submit</button>
             </div>
           </form>
         </section>
@@ -175,6 +188,7 @@ export class ExpensesComponent {
   readonly status = signal('');
   readonly message = signal('');
   readonly files = signal<File[]>([]);
+  readonly isOther = signal(false);
   readonly categories = [
     'Security',
     'Housekeeping',
@@ -193,6 +207,7 @@ export class ExpensesComponent {
   readonly form = this.fb.nonNullable.group({
     expenseDate: [new Date().toISOString().slice(0, 10), Validators.required],
     category: ['Security', Validators.required],
+    customCategory: [''],
     vendorName: ['', [Validators.required, Validators.maxLength(120)]],
     description: ['', [Validators.required, Validators.minLength(3)]],
     amount: [0, [Validators.required, Validators.min(0.01)]],
@@ -240,6 +255,17 @@ export class ExpensesComponent {
   label(value: string): string {
     return value.replaceAll('_', ' ');
   }
+  selectCategory(category: string): void {
+    const control = this.form.controls.customCategory;
+    this.isOther.set(category === 'Other');
+    if (category === 'Other') {
+      control.setValidators([Validators.required, Validators.minLength(2)]);
+    } else {
+      control.clearValidators();
+      control.setValue('');
+    }
+    control.updateValueAndValidity();
+  }
   filesSelected(event: Event): void {
     const files = [...((event.target as HTMLInputElement).files ?? [])];
     const error = files.map(fileValidationError).find(Boolean);
@@ -258,7 +284,14 @@ export class ExpensesComponent {
       return;
     }
     try {
-      const expenseId = await this.data.addExpense(this.form.getRawValue(), submit);
+      const value = this.form.getRawValue();
+      const expenseId = await this.data.addExpense(
+        {
+          ...value,
+          ...resolvedExpenseCategory(value.category, value.customCategory),
+        },
+        submit,
+      );
       for (const file of this.files()) {
         await this.data.uploadDocument(file, 'expense', expenseId, 'expense_bill');
       }
@@ -295,9 +328,11 @@ export class ExpensesComponent {
     this.showForm.set(false);
     this.message.set('');
     this.files.set([]);
+    this.isOther.set(false);
     this.form.reset({
       expenseDate: new Date().toISOString().slice(0, 10),
       category: 'Security',
+      customCategory: '',
       vendorName: '',
       description: '',
       amount: 0,

@@ -3,13 +3,14 @@ import { Router } from '@angular/router';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { environment } from '../../environments/environment';
 import { Profile } from './models';
+import { loginIdentity, normalizeLoginUsername } from './workflow.utils';
 
 const DEMO_PROFILE: Profile = {
   id: 'demo-owner-101',
   username: 'flat101',
   flatId: 'flat-101',
   flatNumber: '101',
-  ownerName: 'Arjun Rao',
+  ownerName: 'K V Reddy Prasad',
   role: 'owner',
   accountStatus: 'active',
   mustChangePassword: false,
@@ -47,7 +48,7 @@ export class AuthService {
   async login(username: string, password: string): Promise<void> {
     if (environment.demoMode && !this.supabase) {
       if (!username.trim() || !password) throw new Error('Enter your flat number and password.');
-      const normalized = username.trim().toLowerCase();
+      const normalized = normalizeLoginUsername(username);
       const emergency = normalized === 'emergency-admin' || normalized === 'admin';
       const flatNumber = normalized.replace(/^flat[-_ ]?/, '') || '101';
       this.profileState.set(
@@ -68,7 +69,7 @@ export class AuthService {
               username: normalized,
               flatId: `flat-${flatNumber}`,
               flatNumber,
-              ownerName: flatNumber === '101' ? 'Arjun Rao' : `Owner · ${flatNumber}`,
+              ownerName: flatNumber === '101' ? 'K V Reddy Prasad' : `Owner · ${flatNumber}`,
               isCurrentAdmin: flatNumber === '101',
             },
       );
@@ -76,7 +77,7 @@ export class AuthService {
       return;
     }
     if (!this.supabase) throw new Error('Supabase is not configured.');
-    const identity = `${username.trim().toLowerCase()}@owners.mukunda-enclave.invalid`;
+    const identity = loginIdentity(username);
     const { data, error } = await this.supabase.auth.signInWithPassword({
       email: identity,
       password,

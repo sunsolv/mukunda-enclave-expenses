@@ -19,6 +19,7 @@ yarn-error.log
 !.env.example
 /migration-output
 /supabase/.temp
+/production-provisioning.local.json
 
 # IDEs and editors
 .idea/

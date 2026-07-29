@@ -3,26 +3,26 @@ begin;
 -- This migration is intentionally additive and repeatable. It preserves all existing
 -- accounts and financial history while bringing manually patched environments in line.
 alter table public.expenses
-  add column if not exists custom_category text;
+  add column if not exists other_category text;
 
 update public.expenses
-set custom_category = null
-where custom_category is not null
-  and nullif(trim(custom_category), '') is null;
+set other_category = null
+where other_category is not null
+  and nullif(trim(other_category), '') is null;
 
 do $$
 begin
   if not exists (
     select 1
     from pg_constraint
-    where conname = 'expenses_custom_category_length'
+    where conname = 'expenses_other_category_length'
       and conrelid = 'public.expenses'::regclass
   ) then
     alter table public.expenses
-      add constraint expenses_custom_category_length
+      add constraint expenses_other_category_length
       check (
-        custom_category is null
-        or length(trim(custom_category)) between 2 and 120
+        other_category is null
+        or length(trim(other_category)) between 2 and 120
       );
   end if;
 end
@@ -49,7 +49,7 @@ where p.flat_id = f.id
 create or replace function public.generate_monthly_charges(
   p_billing_month date,
   p_due_date date,
-  p_amount numeric
+  p_base_amount numeric
 )
 returns setof public.maintenance_charges
 language plpgsql
@@ -62,7 +62,7 @@ begin
   if not public.can_manage_finances() then
     raise exception 'Not authorized';
   end if;
-  if p_amount is null or p_amount <= 0 then
+  if p_base_amount is null or p_base_amount <= 0 then
     raise exception 'Maintenance amount must be greater than zero';
   end if;
   if p_due_date < v_month then
@@ -83,7 +83,7 @@ begin
   select
     f.id,
     v_month,
-    p_amount,
+    p_base_amount,
     coalesce((
       select sum(c.balance_amount)
       from public.maintenance_charges c
@@ -92,7 +92,7 @@ begin
         and c.status not in ('paid', 'cancelled')
     ), 0),
     p_due_date,
-    p_amount + coalesce((
+    p_base_amount + coalesce((
       select sum(c.balance_amount)
       from public.maintenance_charges c
       where c.flat_id = f.id
@@ -116,7 +116,7 @@ begin
     jsonb_build_object(
       'billing_month', v_month,
       'due_date', p_due_date,
-      'amount', p_amount
+      'amount', p_base_amount
     )
   );
 exception
@@ -128,14 +128,14 @@ $$;
 create or replace function public.save_expense(
   p_expense_date date,
   p_category_name text,
-  p_custom_category text,
   p_vendor_name text,
   p_description text,
   p_amount numeric,
   p_payment_mode public.payment_mode,
   p_transaction_reference text default null,
   p_notes text default null,
-  p_submit boolean default false
+  p_submit boolean default false,
+  p_other_category text default null
 )
 returns uuid
 language plpgsql
@@ -144,7 +144,7 @@ set search_path = ''
 as $$
 declare
   v_category_id uuid;
-  v_custom_category text := nullif(trim(p_custom_category), '');
+  v_other_category text := nullif(trim(p_other_category), '');
   v_id uuid;
 begin
   if not public.can_manage_finances() then
@@ -159,17 +159,17 @@ begin
     raise exception 'Active expense category not found';
   end if;
   if p_category_name = 'Other'
-     and (v_custom_category is null or length(v_custom_category) not between 2 and 120) then
+     and (v_other_category is null or length(v_other_category) not between 2 and 120) then
     raise exception 'A custom category is required for Other';
   end if;
   if p_category_name <> 'Other' then
-    v_custom_category := null;
+    v_other_category := null;
   end if;
 
   insert into public.expenses(
     expense_date,
     category_id,
-    custom_category,
+    other_category,
     vendor_name,
     description,
     amount,
@@ -183,7 +183,7 @@ begin
   values (
     p_expense_date,
     v_category_id,
-    v_custom_category,
+    v_other_category,
     trim(p_vendor_name),
     trim(p_description),
     p_amount,
@@ -293,7 +293,7 @@ grant execute on function public.verify_payment(uuid,boolean,text) to authentica
 grant execute on function public.review_expense(uuid,boolean,text) to authenticated;
 grant execute on function public.cancel_payment(uuid,text) to authenticated;
 grant execute on function public.cancel_expense(uuid,text) to authenticated;
-grant execute on function public.save_expense(date,text,text,text,text,numeric,public.payment_mode,text,text,boolean) to authenticated;
+grant execute on function public.save_expense(date,text,text,text,numeric,public.payment_mode,text,text,boolean,text) to authenticated;
 grant execute on function public.discard_failed_document(uuid) to authenticated;
 grant execute on function public.complete_annual_handover(uuid,uuid,uuid,text,numeric) to authenticated;
 grant execute on function public.update_owner_details(uuid,text,text) to authenticated;

@@ -314,7 +314,7 @@ export class DataService {
         this.auth.supabase
           .from('expenses')
           .select(
-            'id,expense_date,vendor_name,description,amount,payment_mode,transaction_reference,status,notes,rejection_reason,custom_category,expense_categories(name)',
+            'id,expense_date,vendor_name,description,amount,payment_mode,transaction_reference,status,notes,rejection_reason,other_category,expense_categories(name)',
           )
           .order('expense_date', { ascending: false }),
         this.auth.supabase
@@ -401,9 +401,9 @@ export class DataService {
           return {
             id: item.id,
             expenseDate: item.expense_date,
-            category: item.custom_category || baseCategory,
+            category: item.other_category || baseCategory,
             baseCategory,
-            customCategory: item.custom_category ?? undefined,
+            customCategory: item.other_category ?? undefined,
             vendorName: item.vendor_name,
             description: item.description,
             amount: Number(item.amount),
@@ -467,7 +467,7 @@ export class DataService {
       const { error } = await this.auth.supabase.rpc('generate_monthly_charges', {
         p_billing_month: `${billingMonth}-01`,
         p_due_date: dueDate,
-        p_amount: amount,
+        p_base_amount: amount,
       });
       if (error) throw error;
       await this.refresh();
@@ -577,7 +577,7 @@ export class DataService {
       const { data, error } = await this.auth.supabase.rpc('save_expense', {
         p_expense_date: expense.expenseDate,
         p_category_name: expense.baseCategory ?? expense.category,
-        p_custom_category: expense.customCategory || null,
+        p_other_category: expense.customCategory || null,
         p_vendor_name: expense.vendorName,
         p_description: expense.description,
         p_amount: expense.amount,

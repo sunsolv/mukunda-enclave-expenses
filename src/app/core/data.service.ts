@@ -26,7 +26,7 @@ export class DataService {
       id: 'flat-101',
       flatNumber: '101',
       floor: 'Ground',
-      ownerName: 'Arjun Rao',
+      ownerName: 'K V Reddy Prasad',
       maintenanceAmount: 2500,
       active: true,
     },
@@ -207,7 +207,7 @@ export class DataService {
       id: 'r2',
       responsibilityYear: today.getFullYear(),
       flatNumber: '101',
-      ownerName: 'Arjun Rao',
+      ownerName: 'K V Reddy Prasad',
       startDate: `${today.getFullYear()}-01-01`,
       endDate: `${today.getFullYear()}-12-31`,
       openingBalance: 18420,
@@ -297,7 +297,7 @@ export class DataService {
       const results = await Promise.all([
         this.auth.supabase
           .from('flats')
-          .select('id,flat_number,floor,owner_name,maintenance_amount,active')
+          .select('id,flat_number,floor,owner_name,mobile,maintenance_amount,active')
           .order('flat_number'),
         this.auth.supabase
           .from('maintenance_charges')
@@ -314,7 +314,7 @@ export class DataService {
         this.auth.supabase
           .from('expenses')
           .select(
-            'id,expense_date,vendor_name,description,amount,payment_mode,transaction_reference,status,notes,rejection_reason,expense_categories(name)',
+            'id,expense_date,vendor_name,description,amount,payment_mode,transaction_reference,status,notes,rejection_reason,custom_category,expense_categories(name)',
           )
           .order('expense_date', { ascending: false }),
         this.auth.supabase
@@ -355,6 +355,7 @@ export class DataService {
           flatNumber: item.flat_number,
           floor: item.floor,
           ownerName: item.owner_name,
+          mobile: item.mobile ?? undefined,
           maintenanceAmount: Number(item.maintenance_amount),
           active: item.active,
         })),
@@ -395,19 +396,24 @@ export class DataService {
         })),
       );
       this.expenses.set(
-        expenseResult.map((item) => ({
-          id: item.id,
-          expenseDate: item.expense_date,
-          category: joined(item.expense_categories).name ?? 'Other',
-          vendorName: item.vendor_name,
-          description: item.description,
-          amount: Number(item.amount),
-          paymentMode: item.payment_mode,
-          status: item.status,
-          transactionReference: item.transaction_reference ?? undefined,
-          notes: item.notes ?? undefined,
-          rejectionReason: item.rejection_reason ?? undefined,
-        })),
+        expenseResult.map((item) => {
+          const baseCategory = joined(item.expense_categories).name ?? 'Other';
+          return {
+            id: item.id,
+            expenseDate: item.expense_date,
+            category: item.custom_category || baseCategory,
+            baseCategory,
+            customCategory: item.custom_category ?? undefined,
+            vendorName: item.vendor_name,
+            description: item.description,
+            amount: Number(item.amount),
+            paymentMode: item.payment_mode,
+            status: item.status,
+            transactionReference: item.transaction_reference ?? undefined,
+            notes: item.notes ?? undefined,
+            rejectionReason: item.rejection_reason ?? undefined,
+          };
+        }),
       );
       this.responsibilities.set(
         responsibilityResult.map((item) => ({
@@ -452,12 +458,16 @@ export class DataService {
     }
   }
 
-  async generateCharges(billingMonth: string, dueDate: string): Promise<void> {
+  async generateCharges(billingMonth: string, dueDate: string, amount: number): Promise<void> {
     this.assertManager();
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new Error('Enter a valid monthly charge amount.');
+    }
     if (this.auth.supabase) {
       const { error } = await this.auth.supabase.rpc('generate_monthly_charges', {
         p_billing_month: `${billingMonth}-01`,
         p_due_date: dueDate,
+        p_amount: amount,
       });
       if (error) throw error;
       await this.refresh();
@@ -474,14 +484,14 @@ export class DataService {
         flatId: flat.id,
         flatNumber: flat.flatNumber,
         billingMonth,
-        baseAmount: flat.maintenanceAmount,
+        baseAmount: amount,
         previousBalance: 0,
         lateFee: 0,
         discount: 0,
         adjustment: 0,
-        totalAmount: flat.maintenanceAmount,
+        totalAmount: amount,
         paidAmount: 0,
-        balanceAmount: flat.maintenanceAmount,
+        balanceAmount: amount,
         dueDate,
         status: 'unpaid' as const,
       }));
@@ -566,7 +576,8 @@ export class DataService {
     if (this.auth.supabase) {
       const { data, error } = await this.auth.supabase.rpc('save_expense', {
         p_expense_date: expense.expenseDate,
-        p_category_name: expense.category,
+        p_category_name: expense.baseCategory ?? expense.category,
+        p_custom_category: expense.customCategory || null,
         p_vendor_name: expense.vendorName,
         p_description: expense.description,
         p_amount: expense.amount,
@@ -581,7 +592,12 @@ export class DataService {
     }
     const expenseId = crypto.randomUUID();
     this.expenses.update((items) => [
-      { ...expense, id: expenseId, status: submit ? 'pending' : 'draft' },
+      {
+        ...expense,
+        category: expense.customCategory || expense.category,
+        id: expenseId,
+        status: submit ? 'pending' : 'draft',
+      },
       ...items,
     ]);
     this.audit(submit ? 'expense.submitted' : 'expense.created', 'expense');
@@ -814,6 +830,43 @@ export class DataService {
     this.auth.relinquishCurrentResponsibility();
   }
 
+  async updateOwnerDetails(flatId: string, ownerName: string, mobile?: string): Promise<void> {
+    this.assertEmergencyAdmin();
+    const normalizedName = ownerName.trim();
+    const normalizedMobile = mobile?.trim() || undefined;
+    if (normalizedName.length < 2 || normalizedName.length > 120) {
+      throw new Error('Owner name must contain between 2 and 120 characters.');
+    }
+    if (normalizedMobile && !/^[0-9+() -]{7,20}$/.test(normalizedMobile)) {
+      throw new Error('Enter a valid mobile number.');
+    }
+    if (this.auth.supabase) {
+      const { error } = await this.auth.supabase.rpc('update_owner_details', {
+        p_flat_id: flatId,
+        p_owner_name: normalizedName,
+        p_mobile: normalizedMobile ?? null,
+      });
+      if (error) throw error;
+      await this.refresh();
+      return;
+    }
+    const target = this.flats().find((flat) => flat.id === flatId);
+    if (!target) throw new Error('Flat owner not found.');
+    this.flats.update((items) =>
+      items.map((flat) =>
+        flat.id === flatId
+          ? { ...flat, ownerName: normalizedName, mobile: normalizedMobile }
+          : flat,
+      ),
+    );
+    this.responsibilities.update((items) =>
+      items.map((item) =>
+        item.flatNumber === target.flatNumber ? { ...item, ownerName: normalizedName } : item,
+      ),
+    );
+    this.audit('owner.updated', 'profile', flatId);
+  }
+
   storageUsage(): number {
     return this.documents().reduce((total, item) => total + item.sizeBytes, 0);
   }
@@ -859,5 +912,11 @@ export class DataService {
   private assertManager(): void {
     if (!this.auth.canManage())
       throw new Error('Only the Current Maintenance Administrator can perform this action.');
+  }
+
+  private assertEmergencyAdmin(): void {
+    if (this.auth.profile()?.role !== 'emergency_admin') {
+      throw new Error('Only the Emergency Administrator can edit owner details.');
+    }
   }
 }

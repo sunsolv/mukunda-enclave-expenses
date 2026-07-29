@@ -101,11 +101,18 @@ import { formatApartmentDate, formatInr } from '../../core/financial.utils';
           <form [formGroup]="form" (ngSubmit)="generate()">
             <label>Billing month<input type="month" formControlName="billingMonth" /></label>
             <label>Due date<input type="date" formControlName="dueDate" /></label>
+            <label
+              >Maintenance amount<input
+                type="number"
+                min="0.01"
+                step="0.01"
+                formControlName="amount"
+            /></label>
             <div class="preview-box">
               <strong>{{ data.flats().length }} active flats</strong
               ><span
-                >Amounts use each flat’s configured maintenance rate. Existing non-cancelled charges
-                are protected from duplicates.</span
+                >The entered amount applies to this billing month. Existing non-cancelled charges
+                remain protected from duplicates.</span
               >
             </div>
             @if (message()) {
@@ -142,6 +149,7 @@ export class MaintenanceComponent {
       `${this.now.getFullYear()}-${String(this.now.getMonth() + 1).padStart(2, '0')}-10`,
       Validators.required,
     ],
+    amount: [3000, [Validators.required, Validators.min(0.01)]],
   });
   readonly filtered = computed(() =>
     this.data
@@ -160,7 +168,11 @@ export class MaintenanceComponent {
   async generate(): Promise<void> {
     if (this.form.invalid) return;
     try {
-      await this.data.generateCharges(this.form.value.billingMonth!, this.form.value.dueDate!);
+      await this.data.generateCharges(
+        this.form.value.billingMonth!,
+        this.form.value.dueDate!,
+        this.form.value.amount!,
+      );
       this.failed.set(false);
       this.message.set('Charges generated successfully.');
       setTimeout(() => this.showGenerator.set(false), 700);

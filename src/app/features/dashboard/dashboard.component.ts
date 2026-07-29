@@ -1,8 +1,9 @@
-import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { AuthService } from '../../core/auth.service';
 import { DataService } from '../../core/data.service';
 import { formatApartmentDate, formatInr } from '../../core/financial.utils';
+import { buildCashFlow, ReportingPeriod } from '../../core/workflow.utils';
 
 @Component({
   selector: 'app-dashboard',
@@ -17,10 +18,14 @@ import { formatApartmentDate, formatInr } from '../../core/financial.utils';
       <div class="header-actions">
         <label class="select-label"
           >Reporting period
-          <select aria-label="Reporting period">
-            <option>This month</option>
-            <option>Previous month</option>
-            <option>Current financial year</option>
+          <select
+            aria-label="Reporting period"
+            [value]="reportingPeriod()"
+            (change)="reportingPeriod.set($any($event.target).value)"
+          >
+            <option value="current_month">This month</option>
+            <option value="previous_month">Previous month</option>
+            <option value="financial_year">Current financial year</option>
           </select>
         </label>
         <a class="primary" routerLink="/reports">Generate report</a>
@@ -56,15 +61,31 @@ import { formatApartmentDate, formatInr } from '../../core/financial.utils';
             ><i class="income"></i> Collections <i class="expense"></i> Expenses</span
           >
         </div>
-        <div class="bar-chart" aria-label="Twelve month illustrative cash-flow chart">
-          @for (value of trend; track $index) {
+        <div class="bar-chart" [attr.aria-label]="'Verified cash-flow chart for ' + periodLabel()">
+          @for (value of cashFlow().buckets; track value.label) {
             <div class="bar-group">
-              <span class="bar income" [style.height.%]="value.income"></span>
-              <span class="bar expense" [style.height.%]="value.expense"></span>
-              <small>{{ value.month }}</small>
+              <span
+                class="bar income"
+                [style.height.%]="value.collectionHeight"
+                [attr.title]="'Collections: ' + money(value.collections)"
+              ></span>
+              <span
+                class="bar expense"
+                [style.height.%]="value.expenseHeight"
+                [attr.title]="'Expenses: ' + money(value.expenses)"
+              ></span>
+              <small>{{ value.label }}</small>
             </div>
           }
         </div>
+        @if (cashFlow().collectionTotal === 0 && cashFlow().expenseTotal === 0) {
+          <p class="muted">No verified collections or approved expenses in this period.</p>
+        } @else {
+          <p class="muted">
+            {{ money(cashFlow().collectionTotal) }} collected ·
+            {{ money(cashFlow().expenseTotal) }} spent
+          </p>
+        }
       </article>
 
       <article class="panel status-panel">
@@ -148,16 +169,19 @@ import { formatApartmentDate, formatInr } from '../../core/financial.utils';
         <article class="panel administrator-card">
           <p class="eyebrow">CURRENT ADMINISTRATOR</p>
           <div class="admin-person">
-            <span>AR</span>
+            <span>{{ administratorInitials() }}</span>
             <div>
-              <h3>Arjun Rao</h3>
-              <p>Flat 101 · {{ currentYear }}</p>
+              <h3>{{ administrator()?.ownerName ?? 'Not assigned' }}</h3>
+              <p>
+                Flat {{ administrator()?.flatNumber ?? '—' }} ·
+                {{ administrator()?.responsibilityYear ?? currentYear }}
+              </p>
             </div>
           </div>
           <div class="progress-line"><span></span></div>
           <div class="date-range">
-            <small>01-01-{{ currentYear }}</small
-            ><small>31-12-{{ currentYear }}</small>
+            <small>{{ administrator() ? date(administrator()!.startDate) : '—' }}</small
+            ><small>{{ administrator() ? date(administrator()!.endDate) : '—' }}</small>
           </div>
           <a routerLink="/responsibility">View responsibility details →</a>
         </article>
@@ -186,20 +210,13 @@ export class DashboardComponent {
   readonly data = inject(DataService);
   private readonly auth = inject(AuthService);
   readonly currentYear = new Date().getFullYear();
-  readonly trend = [
-    { month: 'Aug', income: 62, expense: 42 },
-    { month: 'Sep', income: 70, expense: 55 },
-    { month: 'Oct', income: 55, expense: 37 },
-    { month: 'Nov', income: 82, expense: 46 },
-    { month: 'Dec', income: 74, expense: 68 },
-    { month: 'Jan', income: 91, expense: 52 },
-    { month: 'Feb', income: 78, expense: 38 },
-    { month: 'Mar', income: 68, expense: 44 },
-    { month: 'Apr', income: 88, expense: 62 },
-    { month: 'May', income: 73, expense: 45 },
-    { month: 'Jun', income: 84, expense: 57 },
-    { month: 'Jul', income: 64, expense: 48 },
-  ];
+  readonly reportingPeriod = signal<ReportingPeriod>('current_month');
+  readonly cashFlow = computed(() =>
+    buildCashFlow(this.data.payments(), this.data.expenses(), this.reportingPeriod()),
+  );
+  readonly administrator = computed(
+    () => this.data.responsibilities().find((item) => item.status === 'current') ?? null,
+  );
   readonly firstName = computed(() => this.auth.profile()?.ownerName.split(' ')[0] ?? 'Owner');
   readonly cards = computed(() => {
     const s = this.data.summary();
@@ -236,7 +253,16 @@ export class DashboardComponent {
     return hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
   }
   periodLabel(): string {
-    return new Intl.DateTimeFormat('en-IN', { month: 'long', year: 'numeric' }).format(new Date());
+    return this.cashFlow().range.label;
+  }
+  administratorInitials(): string {
+    return (this.administrator()?.ownerName ?? 'NA')
+      .split(' ')
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0])
+      .join('')
+      .toUpperCase();
   }
   money = formatInr;
   date = formatApartmentDate;

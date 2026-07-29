@@ -20,6 +20,7 @@ export interface Flat {
   flatNumber: string;
   floor: string;
   ownerName: string;
+  mobile?: string;
   maintenanceAmount: number;
   active: boolean;
 }
@@ -61,6 +62,8 @@ export interface Expense {
   id: string;
   expenseDate: string;
   category: string;
+  baseCategory?: string;
+  customCategory?: string;
   vendorName: string;
   description: string;
   amount: number;

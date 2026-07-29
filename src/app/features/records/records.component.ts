@@ -1,14 +1,16 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { ActivatedRoute, RouterLink } from '@angular/router';
+import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { AuthService } from '../../core/auth.service';
 import { DataService } from '../../core/data.service';
 import { ExportService } from '../../core/export.service';
 import { formatApartmentDate, formatInr } from '../../core/financial.utils';
+import { Flat } from '../../core/models';
 import { environment } from '../../../environments/environment';
 
 @Component({
   selector: 'app-records',
-  imports: [RouterLink],
+  imports: [RouterLink, ReactiveFormsModule],
   template: `
     <header class="page-header">
       <div>
@@ -26,7 +28,13 @@ import { environment } from '../../../environments/environment';
               <div>
                 <h2>{{ flat.ownerName }}</h2>
                 <p>{{ flat.floor }} floor</p>
+                @if (flat.mobile) {
+                  <p>{{ flat.mobile }}</p>
+                }
                 <span class="badge verified">{{ flat.active ? 'active' : 'inactive' }}</span>
+                @if (auth.profile()?.role === 'emergency_admin') {
+                  <button class="small-button" (click)="editOwner(flat)">Edit owner</button>
+                }
               </div>
               <div class="flat-charge">
                 <small>Monthly maintenance</small
@@ -35,6 +43,27 @@ import { environment } from '../../../environments/environment';
             </article>
           }
         </section>
+        @if (editingFlat()) {
+          <div class="dialog-backdrop">
+            <section class="dialog" role="dialog" aria-modal="true" aria-labelledby="owner-title">
+              <p class="eyebrow">AUTHORIZED OWNER UPDATE</p>
+              <h2 id="owner-title">Edit Flat {{ editingFlat()!.flatNumber }}</h2>
+              <form [formGroup]="ownerForm" (ngSubmit)="saveOwner()">
+                <label>Owner name<input formControlName="ownerName" maxlength="120" /></label>
+                <label>Mobile<input formControlName="mobile" maxlength="20" /></label>
+                @if (ownerMessage()) {
+                  <div class="alert error">{{ ownerMessage() }}</div>
+                }
+                <div class="dialog-actions">
+                  <button type="button" class="secondary" (click)="closeOwnerEditor()">
+                    Close
+                  </button>
+                  <button type="submit" class="primary">Submit</button>
+                </div>
+              </form>
+            </section>
+          </div>
+        }
       }
       @case ('documents') {
         <section class="panel table-panel">
@@ -215,7 +244,14 @@ export class RecordsComponent {
   readonly data = inject(DataService);
   readonly auth = inject(AuthService);
   private readonly exports = inject(ExportService);
+  private readonly fb = inject(FormBuilder);
   readonly documentMessage = signal('');
+  readonly ownerMessage = signal('');
+  readonly editingFlat = signal<Flat | null>(null);
+  readonly ownerForm = this.fb.nonNullable.group({
+    ownerName: ['', [Validators.required, Validators.minLength(2), Validators.maxLength(120)]],
+    mobile: ['', Validators.maxLength(20)],
+  });
   readonly env = environment;
   readonly view = inject(ActivatedRoute).snapshot.data['view'] as string;
   readonly content: Record<string, [string, string, string]> = {
@@ -288,6 +324,29 @@ export class RecordsComponent {
       this.documentMessage.set(
         error instanceof Error ? error.message : 'Document ZIP download failed.',
       );
+    }
+  }
+  editOwner(flat: Flat): void {
+    this.ownerMessage.set('');
+    this.editingFlat.set(flat);
+    this.ownerForm.reset({ ownerName: flat.ownerName, mobile: flat.mobile ?? '' });
+  }
+  closeOwnerEditor(): void {
+    this.editingFlat.set(null);
+    this.ownerMessage.set('');
+  }
+  async saveOwner(): Promise<void> {
+    const flat = this.editingFlat();
+    if (!flat || this.ownerForm.invalid) {
+      this.ownerForm.markAllAsTouched();
+      return;
+    }
+    try {
+      const value = this.ownerForm.getRawValue();
+      await this.data.updateOwnerDetails(flat.id, value.ownerName, value.mobile);
+      this.closeOwnerEditor();
+    } catch (error) {
+      this.ownerMessage.set(error instanceof Error ? error.message : 'Owner update failed.');
     }
   }
 }

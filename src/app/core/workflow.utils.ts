@@ -23,6 +23,13 @@ export interface CashFlowResult {
   expenseTotal: number;
 }
 
+const FLAT_LOGIN_ALIASES: Readonly<Record<string, string>> = {
+  '101': 'reddyprasadkv',
+  '201': 'sandeepg',
+  '301': 'saidulu',
+  '401': 'chokkareddy',
+};
+
 function isoDate(value: Date): string {
   return [
     value.getFullYear(),
@@ -38,7 +45,14 @@ function monthEnd(year: number, month: number): Date {
 export function normalizeLoginUsername(value: string): string {
   const normalized = value.trim().toLowerCase();
   const flatMatch = normalized.match(/^flat[\s_-]*(\d+)$/) ?? normalized.match(/^(\d+)$/);
-  return flatMatch ? `flat${flatMatch[1]}` : normalized;
+  return flatMatch ? (FLAT_LOGIN_ALIASES[flatMatch[1]] ?? `flat${flatMatch[1]}`) : normalized;
+}
+
+export function flatNumberFromLogin(value: string): string | undefined {
+  const normalized = value.trim().toLowerCase();
+  const flatMatch = normalized.match(/^flat[\s_-]*(\d+)$/) ?? normalized.match(/^(\d+)$/);
+  if (flatMatch) return flatMatch[1];
+  return Object.entries(FLAT_LOGIN_ALIASES).find(([, username]) => username === normalized)?.[0];
 }
 
 export function loginIdentity(value: string): string {

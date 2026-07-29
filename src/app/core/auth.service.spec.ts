@@ -12,7 +12,7 @@ describe('AuthService login identifiers', () => {
     await auth.login('101', 'demo-password');
 
     expect(auth.profile()).toMatchObject({
-      username: 'flat101',
+      username: 'reddyprasadkv',
       flatNumber: '101',
       ownerName: 'K V Reddy Prasad',
     });
@@ -20,11 +20,11 @@ describe('AuthService login identifiers', () => {
 
   it('continues to accept an assigned username', async () => {
     const auth = TestBed.inject(AuthService);
-    await auth.login('flat102', 'demo-password');
+    await auth.login('sandeepg', 'demo-password');
 
     expect(auth.profile()).toMatchObject({
-      username: 'flat102',
-      flatNumber: '102',
+      username: 'sandeepg',
+      flatNumber: '201',
     });
   });
 });

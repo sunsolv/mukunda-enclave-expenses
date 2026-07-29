@@ -3,7 +3,7 @@ import { Router } from '@angular/router';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { environment } from '../../environments/environment';
 import { Profile } from './models';
-import { loginIdentity, normalizeLoginUsername } from './workflow.utils';
+import { flatNumberFromLogin, loginIdentity, normalizeLoginUsername } from './workflow.utils';
 
 const DEMO_PROFILE: Profile = {
   id: 'demo-owner-101',
@@ -50,7 +50,7 @@ export class AuthService {
       if (!username.trim() || !password) throw new Error('Enter your flat number and password.');
       const normalized = normalizeLoginUsername(username);
       const emergency = normalized === 'emergency-admin' || normalized === 'admin';
-      const flatNumber = normalized.replace(/^flat[-_ ]?/, '') || '101';
+      const flatNumber = flatNumberFromLogin(username) ?? normalized.replace(/^flat[-_ ]?/, '');
       this.profileState.set(
         emergency
           ? {

@@ -9,10 +9,12 @@ import { Expense, MaintenanceCharge, Payment } from './models';
 
 describe('workflow utilities', () => {
   it('resolves flat numbers and usernames to internal login identities', () => {
-    expect(normalizeLoginUsername('101')).toBe('flat101');
-    expect(normalizeLoginUsername('Flat 101')).toBe('flat101');
+    expect(normalizeLoginUsername('101')).toBe('reddyprasadkv');
+    expect(normalizeLoginUsername('Flat 101')).toBe('reddyprasadkv');
+    expect(normalizeLoginUsername('reddyprasadkv')).toBe('reddyprasadkv');
     expect(normalizeLoginUsername('owner.one')).toBe('owner.one');
-    expect(loginIdentity('101')).toBe('flat101@owners.mukunda-enclave.invalid');
+    expect(loginIdentity('101')).toBe('reddyprasadkv@owners.mukunda-enclave.invalid');
+    expect(loginIdentity('101')).toBe(loginIdentity('reddyprasadkv'));
   });
 
   it('uses only verified collections and approved expenses in real cash-flow totals', () => {

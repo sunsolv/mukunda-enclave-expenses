@@ -3,7 +3,7 @@ import { RouterLink } from '@angular/router';
 import { AuthService } from '../../core/auth.service';
 import { DataService } from '../../core/data.service';
 import { formatApartmentDate, formatInr } from '../../core/financial.utils';
-import { buildCashFlow, ReportingPeriod } from '../../core/workflow.utils';
+import { buildCashFlow, buildFinancialPosition, ReportingPeriod } from '../../core/workflow.utils';
 
 @Component({
   selector: 'app-dashboard',
@@ -214,31 +214,47 @@ export class DashboardComponent {
   readonly cashFlow = computed(() =>
     buildCashFlow(this.data.payments(), this.data.expenses(), this.reportingPeriod()),
   );
+  readonly financialPosition = computed(() => {
+    const range = this.cashFlow().range;
+    return buildFinancialPosition(
+      this.data.payments(),
+      this.data.expenses(),
+      this.data.responsibilities(),
+      range.from,
+      range.to,
+    );
+  });
   readonly administrator = computed(
     () => this.data.responsibilities().find((item) => item.status === 'current') ?? null,
   );
   readonly firstName = computed(() => this.auth.profile()?.ownerName.split(' ')[0] ?? 'Owner');
   readonly cards = computed(() => {
     const s = this.data.summary();
+    const position = this.financialPosition();
     return [
       {
         label: 'Opening balance',
-        value: s.openingBalance,
-        note: 'Carried into this period',
+        value: position.openingBalance,
+        note: 'Balance at period start',
         icon: '↳',
       },
       { label: 'Maintenance billed', value: s.billed, note: 'Across all active flats', icon: '▦' },
       {
         label: 'Verified collections',
-        value: s.collected,
+        value: position.collections,
         note: `${s.paidFlats} flats fully paid`,
         icon: '↓',
       },
-      { label: 'Approved expenses', value: s.expenses, note: 'Approved only', icon: '↗' },
+      {
+        label: 'Approved expenses',
+        value: position.expenses,
+        note: 'Approved in this period',
+        icon: '↗',
+      },
       {
         label: 'Closing balance',
-        value: s.closingBalance,
-        note: 'Verified live position',
+        value: position.closingBalance,
+        note: 'Balance at period end',
         icon: '₹',
         featured: true,
       },

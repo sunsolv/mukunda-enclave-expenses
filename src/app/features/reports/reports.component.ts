@@ -3,6 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { DataService } from '../../core/data.service';
 import { ExportService } from '../../core/export.service';
 import { formatApartmentDate, formatInr } from '../../core/financial.utils';
+import { buildFinancialPosition } from '../../core/workflow.utils';
 
 type ReportType = 'payments' | 'expenses' | 'pending' | 'income-expense';
 
@@ -188,6 +189,16 @@ export class ReportsComponent {
     this.refresh();
     return this.catalog.find((x) => x.type === this.reportType)?.title ?? 'Report';
   });
+  readonly financialPosition = computed(() => {
+    this.refresh();
+    return buildFinancialPosition(
+      this.data.payments(),
+      this.data.expenses(),
+      this.data.responsibilities(),
+      this.fromDate,
+      this.toDate,
+    );
+  });
   readonly rows = computed<Array<Record<string, string | number>>>(() => {
     this.refresh();
     if (this.reportType === 'payments')
@@ -225,10 +236,10 @@ export class ReportsComponent {
           'Due date': formatApartmentDate(x.dueDate),
           Amount: x.balanceAmount,
         }));
-    const s = this.data.summary();
+    const s = this.financialPosition();
     return [
       { Metric: 'Opening balance', Amount: s.openingBalance },
-      { Metric: 'Verified collections', Amount: s.collected },
+      { Metric: 'Verified collections', Amount: s.collections },
       { Metric: 'Approved expenses', Amount: -s.expenses },
       { Metric: 'Closing balance', Amount: s.closingBalance },
     ];
@@ -246,7 +257,7 @@ export class ReportsComponent {
   );
   readonly total = computed(() =>
     this.reportType === 'income-expense'
-      ? this.data.summary().closingBalance
+      ? this.financialPosition().closingBalance
       : this.rows().reduce((sum, row) => sum + Number(row['Amount'] ?? 0), 0),
   );
   constructor() {

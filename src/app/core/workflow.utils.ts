@@ -1,4 +1,4 @@
-import { Expense, MaintenanceCharge, Payment } from './models';
+import { Expense, MaintenanceCharge, Payment, Responsibility } from './models';
 
 export type ReportingPeriod = 'current_month' | 'previous_month' | 'financial_year';
 
@@ -21,6 +21,13 @@ export interface CashFlowResult {
   buckets: CashFlowBucket[];
   collectionTotal: number;
   expenseTotal: number;
+}
+
+export interface FinancialPosition {
+  openingBalance: number;
+  collections: number;
+  expenses: number;
+  closingBalance: number;
 }
 
 const FLAT_LOGIN_ALIASES: Readonly<Record<string, string>> = {
@@ -148,6 +155,57 @@ export function buildCashFlow(
     buckets,
     collectionTotal: buckets.reduce((sum, bucket) => sum + bucket.collections, 0),
     expenseTotal: buckets.reduce((sum, bucket) => sum + bucket.expenses, 0),
+  };
+}
+
+export function buildFinancialPosition(
+  payments: Payment[],
+  expenses: Expense[],
+  responsibilities: Responsibility[],
+  from: string,
+  to: string,
+): FinancialPosition {
+  if (!from || !to || from > to) {
+    return { openingBalance: 0, collections: 0, expenses: 0, closingBalance: 0 };
+  }
+
+  const responsibility = responsibilities
+    .filter((item) => item.startDate <= from)
+    .sort((left, right) => right.startDate.localeCompare(left.startDate))[0];
+  const ledgerStart = responsibility?.startDate ?? from;
+  const verifiedPayments = payments.filter(
+    (payment) => payment.verificationStatus === 'verified' && !payment.cancelled,
+  );
+  const approvedExpenses = expenses.filter((expense) => expense.status === 'approved');
+  const sumPayments = (start: string, end: string, endInclusive: boolean): number =>
+    verifiedPayments
+      .filter(
+        (payment) =>
+          payment.paymentDate >= start &&
+          (endInclusive ? payment.paymentDate <= end : payment.paymentDate < end),
+      )
+      .reduce((sum, payment) => sum + payment.amount, 0);
+  const sumExpenses = (start: string, end: string, endInclusive: boolean): number =>
+    approvedExpenses
+      .filter(
+        (expense) =>
+          expense.expenseDate >= start &&
+          (endInclusive ? expense.expenseDate <= end : expense.expenseDate < end),
+      )
+      .reduce((sum, expense) => sum + expense.amount, 0);
+
+  const openingBalance =
+    (responsibility?.openingBalance ?? 0) +
+    sumPayments(ledgerStart, from, false) -
+    sumExpenses(ledgerStart, from, false);
+  const collections = sumPayments(from, to, true);
+  const periodExpenses = sumExpenses(from, to, true);
+
+  return {
+    openingBalance,
+    collections,
+    expenses: periodExpenses,
+    closingBalance: openingBalance + collections - periodExpenses,
   };
 }
 

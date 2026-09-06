@@ -1,11 +1,12 @@
 import {
   buildCashFlow,
+  buildFinancialPosition,
   loginIdentity,
   normalizeLoginUsername,
   outstandingCharges,
   resolvedExpenseCategory,
 } from './workflow.utils';
-import { Expense, MaintenanceCharge, Payment } from './models';
+import { Expense, MaintenanceCharge, Payment, Responsibility } from './models';
 
 describe('workflow utilities', () => {
   it('resolves flat numbers and usernames to internal login identities', () => {
@@ -38,6 +39,80 @@ describe('workflow utilities', () => {
     expect(result.collectionTotal).toBe(3000);
     expect(result.expenseTotal).toBe(1200);
     expect(result.buckets.some((bucket) => bucket.collectionHeight > 0)).toBe(true);
+  });
+
+  it('carries prior verified activity into the selected period opening balance', () => {
+    const responsibilities = [
+      {
+        startDate: '2026-07-01',
+        endDate: '2027-06-30',
+        openingBalance: 0,
+        status: 'current',
+      },
+    ] as Responsibility[];
+    const payments = [
+      {
+        paymentDate: '2026-07-10',
+        amount: 22000,
+        verificationStatus: 'verified',
+      },
+      {
+        paymentDate: '2026-09-04',
+        amount: 3000,
+        verificationStatus: 'verified',
+      },
+      {
+        paymentDate: '2026-08-15',
+        amount: 900,
+        verificationStatus: 'pending',
+      },
+    ] as Payment[];
+    const expenses = [
+      { expenseDate: '2026-08-20', amount: 19395, status: 'approved' },
+      { expenseDate: '2026-09-05', amount: 500, status: 'approved' },
+      { expenseDate: '2026-08-25', amount: 400, status: 'pending' },
+    ] as Expense[];
+
+    expect(
+      buildFinancialPosition(payments, expenses, responsibilities, '2026-09-01', '2026-09-30'),
+    ).toEqual({
+      openingBalance: 2605,
+      collections: 3000,
+      expenses: 500,
+      closingBalance: 5105,
+    });
+  });
+
+  it('does not include transactions before the responsibility opening date', () => {
+    const responsibilities = [
+      {
+        startDate: '2026-01-01',
+        endDate: '2026-12-31',
+        openingBalance: 18420,
+        status: 'current',
+      },
+    ] as Responsibility[];
+    const payments = [
+      {
+        paymentDate: '2025-12-31',
+        amount: 50000,
+        verificationStatus: 'verified',
+      },
+      {
+        paymentDate: '2026-01-10',
+        amount: 2500,
+        verificationStatus: 'verified',
+      },
+    ] as Payment[];
+
+    expect(
+      buildFinancialPosition(payments, [], responsibilities, '2026-02-01', '2026-02-28'),
+    ).toEqual({
+      openingBalance: 20920,
+      collections: 0,
+      expenses: 0,
+      closingBalance: 20920,
+    });
   });
 
   it('returns only outstanding months for the selected flat', () => {

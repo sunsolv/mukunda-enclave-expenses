@@ -1,6 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { AuthService } from './auth.service';
-import { calculateClosingBalance, fileValidationError } from './financial.utils';
+import { fileValidationError } from './financial.utils';
+import { buildFinancialPosition } from './workflow.utils';
 import {
   AuditEntry,
   DashboardSummary,
@@ -269,21 +270,23 @@ export class DataService {
 
   readonly summary = computed<DashboardSummary>(() => {
     const activeCharges = this.charges().filter((item) => item.status !== 'cancelled');
-    const collected = this.payments()
-      .filter((item) => item.verificationStatus === 'verified' && !item.cancelled)
-      .reduce((sum, item) => sum + item.amount, 0);
-    const expenses = this.expenses()
-      .filter((item) => item.status === 'approved')
-      .reduce((sum, item) => sum + item.amount, 0);
-    const openingBalance =
-      this.responsibilities().find((item) => item.status === 'current')?.openingBalance ?? 0;
+    const current = this.responsibilities().find((item) => item.status === 'current');
+    const position = current
+      ? buildFinancialPosition(
+          this.payments(),
+          this.expenses(),
+          this.responsibilities(),
+          current.startDate,
+          current.endDate,
+        )
+      : { openingBalance: 0, collections: 0, expenses: 0, closingBalance: 0 };
     return {
-      openingBalance,
+      openingBalance: position.openingBalance,
       billed: activeCharges.reduce((sum, item) => sum + item.totalAmount, 0),
-      collected,
+      collected: position.collections,
       pending: activeCharges.reduce((sum, item) => sum + item.balanceAmount, 0),
-      expenses,
-      closingBalance: calculateClosingBalance(openingBalance, collected, expenses),
+      expenses: position.expenses,
+      closingBalance: position.closingBalance,
       paidFlats: activeCharges.filter((item) => item.status === 'paid').length,
       partialFlats: activeCharges.filter((item) => item.status === 'partially_paid').length,
       pendingFlats: activeCharges.filter((item) => item.status === 'unpaid').length,

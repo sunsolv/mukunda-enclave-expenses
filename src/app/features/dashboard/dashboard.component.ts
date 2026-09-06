@@ -3,7 +3,12 @@ import { RouterLink } from '@angular/router';
 import { AuthService } from '../../core/auth.service';
 import { DataService } from '../../core/data.service';
 import { formatApartmentDate, formatInr } from '../../core/financial.utils';
-import { buildCashFlow, buildFinancialPosition, ReportingPeriod } from '../../core/workflow.utils';
+import {
+  buildCashFlow,
+  buildFinancialPosition,
+  buildMaintenanceSummary,
+  ReportingPeriod,
+} from '../../core/workflow.utils';
 
 @Component({
   selector: 'app-dashboard',
@@ -91,33 +96,33 @@ import { buildCashFlow, buildFinancialPosition, ReportingPeriod } from '../../co
       <article class="panel status-panel">
         <div class="panel-heading">
           <div>
-            <p class="eyebrow">THIS MONTH</p>
+            <p class="eyebrow">{{ periodLabel() }}</p>
             <h2>Payment status</h2>
           </div>
         </div>
         <div class="donut-wrap">
           <div class="donut" [style.--paid]="paidPercent() + '%'">
             <span
-              ><strong>{{ data.summary().paidFlats }}</strong
+              ><strong>{{ maintenanceSummary().paidFlats }}</strong
               ><small>paid</small></span
             >
           </div>
           <ul class="status-list">
             <li>
               <i class="success"></i><span>Paid</span
-              ><strong>{{ data.summary().paidFlats }}</strong>
+              ><strong>{{ maintenanceSummary().paidFlats }}</strong>
             </li>
             <li>
               <i class="warning"></i><span>Partial</span
-              ><strong>{{ data.summary().partialFlats }}</strong>
+              ><strong>{{ maintenanceSummary().partialFlats }}</strong>
             </li>
             <li>
               <i class="muted-dot"></i><span>Pending</span
-              ><strong>{{ data.summary().pendingFlats }}</strong>
+              ><strong>{{ maintenanceSummary().pendingFlats }}</strong>
             </li>
             <li>
               <i class="danger"></i><span>Overdue</span
-              ><strong>{{ data.summary().overdueFlats }}</strong>
+              ><strong>{{ maintenanceSummary().overdueFlats }}</strong>
             </li>
           </ul>
         </div>
@@ -197,9 +202,9 @@ import { buildCashFlow, buildFinancialPosition, ReportingPeriod } from '../../co
       </aside>
     </section>
 
-    @if (data.summary().overdueFlats > 0) {
+    @if (maintenanceSummary().overdueFlats > 0) {
       <div class="alert warning">
-        <strong>Action needed:</strong> {{ data.summary().overdueFlats }} flat has overdue
+        <strong>Action needed:</strong> {{ maintenanceSummary().overdueFlats }} flat has overdue
         maintenance. <a routerLink="/maintenance">Review now</a>
       </div>
     }
@@ -224,13 +229,17 @@ export class DashboardComponent {
       range.to,
     );
   });
+  readonly maintenanceSummary = computed(() => {
+    const range = this.cashFlow().range;
+    return buildMaintenanceSummary(this.data.charges(), range.from, range.to);
+  });
   readonly administrator = computed(
     () => this.data.responsibilities().find((item) => item.status === 'current') ?? null,
   );
   readonly firstName = computed(() => this.auth.profile()?.ownerName.split(' ')[0] ?? 'Owner');
   readonly cards = computed(() => {
-    const s = this.data.summary();
     const position = this.financialPosition();
+    const maintenance = this.maintenanceSummary();
     return [
       {
         label: 'Opening balance',
@@ -238,11 +247,16 @@ export class DashboardComponent {
         note: 'Balance at period start',
         icon: '↳',
       },
-      { label: 'Maintenance billed', value: s.billed, note: 'Across all active flats', icon: '▦' },
+      {
+        label: 'Maintenance billed',
+        value: maintenance.billed,
+        note: 'New charges in this period',
+        icon: '▦',
+      },
       {
         label: 'Verified collections',
         value: position.collections,
-        note: `${s.paidFlats} flats fully paid`,
+        note: `${maintenance.paidFlats} flats fully paid`,
         icon: '↓',
       },
       {
@@ -261,7 +275,7 @@ export class DashboardComponent {
     ];
   });
   readonly paidPercent = computed(() =>
-    Math.round((this.data.summary().paidFlats / Math.max(1, this.data.flats().length)) * 100),
+    Math.round((this.maintenanceSummary().paidFlats / Math.max(1, this.data.flats().length)) * 100),
   );
 
   greeting(): string {

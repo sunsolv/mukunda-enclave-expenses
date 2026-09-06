@@ -1,7 +1,7 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { AuthService } from './auth.service';
 import { fileValidationError } from './financial.utils';
-import { buildFinancialPosition } from './workflow.utils';
+import { buildFinancialPosition, buildMaintenanceSummary } from './workflow.utils';
 import {
   AuditEntry,
   DashboardSummary,
@@ -269,7 +269,6 @@ export class DataService {
   ]);
 
   readonly summary = computed<DashboardSummary>(() => {
-    const activeCharges = this.charges().filter((item) => item.status !== 'cancelled');
     const current = this.responsibilities().find((item) => item.status === 'current');
     const position = current
       ? buildFinancialPosition(
@@ -280,17 +279,20 @@ export class DataService {
           current.endDate,
         )
       : { openingBalance: 0, collections: 0, expenses: 0, closingBalance: 0 };
+    const maintenance = current
+      ? buildMaintenanceSummary(this.charges(), current.startDate, current.endDate)
+      : buildMaintenanceSummary(this.charges(), '', '');
     return {
       openingBalance: position.openingBalance,
-      billed: activeCharges.reduce((sum, item) => sum + item.totalAmount, 0),
+      billed: maintenance.billed,
       collected: position.collections,
-      pending: activeCharges.reduce((sum, item) => sum + item.balanceAmount, 0),
+      pending: maintenance.pending,
       expenses: position.expenses,
       closingBalance: position.closingBalance,
-      paidFlats: activeCharges.filter((item) => item.status === 'paid').length,
-      partialFlats: activeCharges.filter((item) => item.status === 'partially_paid').length,
-      pendingFlats: activeCharges.filter((item) => item.status === 'unpaid').length,
-      overdueFlats: activeCharges.filter((item) => item.status === 'overdue').length,
+      paidFlats: maintenance.paidFlats,
+      partialFlats: maintenance.partialFlats,
+      pendingFlats: maintenance.pendingFlats,
+      overdueFlats: maintenance.overdueFlats,
     };
   });
 
@@ -485,24 +487,38 @@ export class DataService {
       (charge) => charge.billingMonth === billingMonth && charge.status !== 'cancelled',
     );
     if (duplicates) throw new Error('Charges already exist for this billing month.');
+    const existingCharges = this.charges();
     const generated = this.flats()
       .filter((flat) => flat.active)
-      .map((flat) => ({
-        id: crypto.randomUUID(),
-        flatId: flat.id,
-        flatNumber: flat.flatNumber,
-        billingMonth,
-        baseAmount: amount,
-        previousBalance: 0,
-        lateFee: 0,
-        discount: 0,
-        adjustment: 0,
-        totalAmount: amount,
-        paidAmount: 0,
-        balanceAmount: amount,
-        dueDate,
-        status: 'unpaid' as const,
-      }));
+      .map((flat) => {
+        const previousBalance =
+          existingCharges
+            .filter(
+              (charge) =>
+                charge.flatId === flat.id &&
+                charge.billingMonth < billingMonth &&
+                charge.status !== 'cancelled',
+            )
+            .sort((left, right) => right.billingMonth.localeCompare(left.billingMonth))[0]
+            ?.balanceAmount ?? 0;
+        const totalAmount = amount + previousBalance;
+        return {
+          id: crypto.randomUUID(),
+          flatId: flat.id,
+          flatNumber: flat.flatNumber,
+          billingMonth,
+          baseAmount: amount,
+          previousBalance,
+          lateFee: 0,
+          discount: 0,
+          adjustment: 0,
+          totalAmount,
+          paidAmount: 0,
+          balanceAmount: totalAmount,
+          dueDate,
+          status: 'unpaid' as const,
+        };
+      });
     this.charges.update((items) => [...generated, ...items]);
     this.audit('maintenance.generated', 'maintenance_charge', billingMonth);
   }

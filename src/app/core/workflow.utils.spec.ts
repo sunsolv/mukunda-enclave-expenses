@@ -1,6 +1,7 @@
 import {
   buildCashFlow,
   buildFinancialPosition,
+  buildMaintenanceSummary,
   loginIdentity,
   normalizeLoginUsername,
   outstandingCharges,
@@ -112,6 +113,72 @@ describe('workflow utilities', () => {
       collections: 0,
       expenses: 0,
       closingBalance: 20920,
+    });
+  });
+
+  it('counts new maintenance billing once and uses only each flat latest balance', () => {
+    const charges = [
+      {
+        id: 'june-101',
+        flatId: '101',
+        billingMonth: '2026-06',
+        baseAmount: 2500,
+        previousBalance: 1000,
+        lateFee: 0,
+        discount: 0,
+        adjustment: 0,
+        totalAmount: 3500,
+        balanceAmount: 3500,
+        status: 'overdue',
+      },
+      {
+        id: 'july-101',
+        flatId: '101',
+        billingMonth: '2026-07',
+        baseAmount: 2500,
+        previousBalance: 3500,
+        lateFee: 100,
+        discount: 50,
+        adjustment: 0,
+        totalAmount: 6050,
+        balanceAmount: 4000,
+        status: 'partially_paid',
+      },
+      {
+        id: 'july-102',
+        flatId: '102',
+        billingMonth: '2026-07',
+        baseAmount: 2500,
+        previousBalance: 0,
+        lateFee: 0,
+        discount: 0,
+        adjustment: 0,
+        totalAmount: 2500,
+        balanceAmount: 0,
+        status: 'paid',
+      },
+      {
+        id: 'cancelled-102',
+        flatId: '102',
+        billingMonth: '2026-07',
+        baseAmount: 9000,
+        previousBalance: 0,
+        lateFee: 0,
+        discount: 0,
+        adjustment: 0,
+        totalAmount: 9000,
+        balanceAmount: 9000,
+        status: 'cancelled',
+      },
+    ] as MaintenanceCharge[];
+
+    expect(buildMaintenanceSummary(charges, '2026-06-01', '2026-07-31')).toEqual({
+      billed: 7550,
+      pending: 4000,
+      paidFlats: 1,
+      partialFlats: 1,
+      pendingFlats: 0,
+      overdueFlats: 0,
     });
   });
 

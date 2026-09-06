@@ -3,6 +3,12 @@ import { AuthService } from './auth.service';
 import { Expense, MaintenanceCharge, Payment } from './models';
 import { amountInIndianWords, formatApartmentDate, formatInr } from './financial.utils';
 
+export function safeSpreadsheetValue(value: unknown): string | number {
+  if (typeof value === 'number') return value;
+  const text = String(value ?? '');
+  return /^[\t\r\n ]*[=+\-@]/.test(text) ? `'${text}` : text;
+}
+
 @Injectable({ providedIn: 'root' })
 export class ExportService {
   private readonly auth = inject(AuthService);
@@ -63,7 +69,8 @@ export class ExportService {
   ): Promise<void> {
     if (!rows.length) throw new Error('There are no rows to export.');
     const headers = Object.keys(rows[0]);
-    const escape = (value: unknown) => `"${String(value ?? '').replaceAll('"', '""')}"`;
+    const escape = (value: unknown) =>
+      `"${String(safeSpreadsheetValue(value)).replaceAll('"', '""')}"`;
     const csv = [
       headers.map(escape).join(','),
       ...rows.map((row) => headers.map((key) => escape(row[key])).join(',')),
@@ -72,11 +79,25 @@ export class ExportService {
   }
 
   async downloadXlsx(filename: string, sheetName: string, rows: unknown[]): Promise<void> {
-    const XLSX = await import('xlsx');
-    const workbook = XLSX.utils.book_new();
-    const sheet = XLSX.utils.json_to_sheet(rows);
-    XLSX.utils.book_append_sheet(workbook, sheet, sheetName.slice(0, 31));
-    XLSX.writeFile(workbook, `${filename}.xlsx`, { compression: true });
+    if (!rows.length) throw new Error('There are no rows to export.');
+    const writeXlsxFile = (await import('write-excel-file/browser')).default;
+    const records = rows as Array<Record<string, unknown>>;
+    const headers = Object.keys(records[0]);
+    const data = [
+      headers.map((header) => ({ value: header, fontWeight: 'bold' as const })),
+      ...records.map((row) => headers.map((header) => safeSpreadsheetValue(row[header]))),
+    ];
+    const columns = headers.map((header) => ({
+      width: Math.min(
+        40,
+        Math.max(12, header.length, ...records.map((row) => String(row[header] ?? '').length)),
+      ),
+    }));
+    const blob = await writeXlsxFile(data, {
+      sheet: sheetName.slice(0, 31),
+      columns,
+    }).toBlob();
+    this.saveBlob(blob, `${filename}.xlsx`);
   }
 
   async downloadReportPdf(

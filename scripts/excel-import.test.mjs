@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import readExcelFile from 'read-excel-file/node';
+import writeExcelFile from 'write-excel-file/node';
 import {
   excelDateToIso,
   idempotencyKey,
@@ -73,4 +75,18 @@ test('reconciliation is formula-driven and idempotency key is stable', () => {
     lastManualRunningBalance: null,
   });
   assert.equal(idempotencyKey(records), idempotencyKey([...records].reverse()));
+});
+
+test('writes and reads supported workbooks without the vulnerable SheetJS parser', async () => {
+  const source = await writeExcelFile([
+    ['Flat No', 'Maintenance Amount', 'Payment Date'],
+    ['101', 2500, '05-09-2026'],
+  ]).toBuffer();
+  const sheets = await readExcelFile(source);
+
+  assert.equal(sheets.length, 1);
+  assert.deepEqual(sheets[0].data, [
+    ['Flat No', 'Maintenance Amount', 'Payment Date'],
+    ['101', 2500, '05-09-2026'],
+  ]);
 });

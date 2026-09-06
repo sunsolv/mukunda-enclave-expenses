@@ -97,6 +97,43 @@ begin
   end if;
 end $$;
 
+do $$
+declare
+  payment_read_rule text;
+begin
+  select qual
+  into payment_read_rule
+  from pg_policies
+  where schemaname = 'public'
+    and tablename = 'payments'
+    and policyname = 'payments_read_authorized';
+
+  if payment_read_rule is null
+    or payment_read_rule not ilike '%can_manage_finances%'
+    or payment_read_rule not ilike '%verification_status%verified%'
+    or payment_read_rule not ilike '%flat_id%current_profile%'
+  then
+    raise exception 'Payment reads must be limited to finance managers, the owner flat, or verified shared payments';
+  end if;
+end $$;
+
+do $$
+begin
+  if has_table_privilege('authenticated', 'public.payments', 'insert') then
+    raise exception 'Authenticated clients must create payments through validated RPC functions';
+  end if;
+  if not exists (
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'payments'
+      and policyname = 'payments_rpc_only_insert'
+      and with_check = 'false'
+  ) then
+    raise exception 'Payment insert deny policy is missing';
+  end if;
+end $$;
+
 rollback;
 
 -- Live negative-access checks are in scripts/verify-supabase-security.mjs.

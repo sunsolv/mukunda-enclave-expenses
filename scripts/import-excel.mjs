@@ -3,7 +3,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
-import * as XLSX from 'xlsx';
+import { strFromU8, unzipSync } from 'fflate';
+import readExcelFile from 'read-excel-file/node';
 import { idempotencyKey, normalizeWorkbookRows, reconcile } from './excel-import-lib.mjs';
 
 const args = new Map();
@@ -37,36 +38,29 @@ const [source, mappingText] = await Promise.all([
 ]);
 const mapping = JSON.parse(mappingText);
 const checksum = crypto.createHash('sha256').update(source).digest('hex');
-const workbook = XLSX.read(source, {
-  type: 'buffer',
-  cellDates: true,
-  cellFormula: true,
-  cellStyles: true,
-});
+if (source.length > 50 * 1024 * 1024) throw new Error('Workbook must be 50 MB or smaller');
+const workbook = await readExcelFile(source);
+const workbookMetadata = inspectWorkbookMetadata(source);
 const allRecords = [];
 const sheetInspection = [];
 const workbookWarnings = [];
 
-for (const sheetName of workbook.SheetNames) {
-  const sheet = workbook.Sheets[sheetName];
-  const matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null, raw: true });
+for (const sheet of workbook) {
+  const sheetName = sheet.sheet;
+  const matrix = sheet.data;
   const normalized = normalizeWorkbookRows(sheetName, matrix, mapping);
+  const metadata = workbookMetadata.get(sheetName);
   allRecords.push(...normalized.records);
   workbookWarnings.push(...normalized.warnings);
   sheetInspection.push({
     name: sheetName,
-    range: sheet['!ref'] ?? null,
+    range: metadata?.range ?? matrixRange(matrix),
     rows: matrix.length,
     columns: Math.max(0, ...matrix.map((row) => row.length)),
-    mergedRanges: (sheet['!merges'] ?? []).map((merge) => XLSX.utils.encode_range(merge)),
-    hiddenRows: (sheet['!rows'] ?? [])
-      .map((row, index) => (row?.hidden ? index + 1 : null))
-      .filter(Boolean),
-    hiddenColumns: (sheet['!cols'] ?? [])
-      .map((column, index) => (column?.hidden ? XLSX.utils.encode_col(index) : null))
-      .filter(Boolean),
-    formulaCells: Object.values(sheet).filter((cell) => cell && typeof cell === 'object' && cell.f)
-      .length,
+    mergedRanges: metadata?.mergedRanges ?? [],
+    hiddenRows: metadata?.hiddenRows ?? [],
+    hiddenColumns: metadata?.hiddenColumns ?? [],
+    formulaCells: metadata?.formulaCells ?? 0,
     recognizedHeaderRow: normalized.header.rowIndex >= 0 ? normalized.header.rowIndex + 1 : null,
     mappedFields: Object.keys(normalized.header.mapping),
   });
@@ -135,3 +129,86 @@ console.log(
 console.log(`Report: ${outputFile}`);
 if (mode === 'validate' && (report.counts.warning > 0 || report.counts.skipped > 0))
   process.exitCode = 3;
+
+function matrixRange(matrix) {
+  const columns = Math.max(0, ...matrix.map((row) => row.length));
+  return matrix.length && columns ? `A1:${columnName(columns)}${matrix.length}` : null;
+}
+
+function columnName(columnNumber) {
+  let value = columnNumber;
+  let name = '';
+  while (value > 0) {
+    value -= 1;
+    name = String.fromCharCode(65 + (value % 26)) + name;
+    value = Math.floor(value / 26);
+  }
+  return name;
+}
+
+function inspectWorkbookMetadata(source) {
+  const files = unzipSync(new Uint8Array(source));
+  const workbookXml = xmlFile(files, 'xl/workbook.xml');
+  const relationshipsXml = xmlFile(files, 'xl/_rels/workbook.xml.rels');
+  const relationships = new Map(
+    [...relationshipsXml.matchAll(/<Relationship\b([^>]*)\/?\s*>/g)].map((match) => [
+      xmlAttribute(match[1], 'Id'),
+      xmlAttribute(match[1], 'Target'),
+    ]),
+  );
+  const metadata = new Map();
+
+  for (const match of workbookXml.matchAll(/<sheet\b([^>]*)\/?\s*>/g)) {
+    const sheetName = decodeXml(xmlAttribute(match[1], 'name'));
+    const target = relationships.get(xmlAttribute(match[1], 'r:id'));
+    if (!sheetName || !target) continue;
+    const sheetPath = target.startsWith('/')
+      ? target.slice(1)
+      : path.posix.normalize(path.posix.join('xl', target));
+    const sheetXml = xmlFile(files, sheetPath);
+    const dimension = sheetXml.match(/<dimension\b[^>]*\bref="([^"]+)"/);
+    const hiddenColumns = [];
+    for (const column of sheetXml.matchAll(/<col\b([^>]*)\/?\s*>/g)) {
+      if (!/\bhidden="(?:1|true)"/.test(column[1])) continue;
+      const minimum = Number(xmlAttribute(column[1], 'min'));
+      const maximum = Number(xmlAttribute(column[1], 'max'));
+      if (!Number.isInteger(minimum) || !Number.isInteger(maximum)) continue;
+      for (let index = Math.max(1, minimum); index <= Math.min(16384, maximum); index += 1) {
+        hiddenColumns.push(columnName(index));
+      }
+    }
+    metadata.set(sheetName, {
+      range: dimension?.[1] ?? null,
+      mergedRanges: [...sheetXml.matchAll(/<mergeCell\b[^>]*\bref="([^"]+)"/g)].map(
+        (merge) => merge[1],
+      ),
+      hiddenRows: [...sheetXml.matchAll(/<row\b([^>]*)\/?\s*>/g)]
+        .filter((row) => /\bhidden="(?:1|true)"/.test(row[1]))
+        .map((row) => Number(xmlAttribute(row[1], 'r')))
+        .filter(Number.isInteger),
+      hiddenColumns,
+      formulaCells: (sheetXml.match(/<f(?:\s|>)/g) ?? []).length,
+    });
+  }
+  return metadata;
+}
+
+function xmlFile(files, filename) {
+  const file = files[filename];
+  if (!file) throw new Error(`Workbook is missing ${filename}`);
+  return strFromU8(file);
+}
+
+function xmlAttribute(attributes, name) {
+  const match = attributes.match(new RegExp(`(?:^|\\s)${name}="([^"]*)"`));
+  return match?.[1] ?? '';
+}
+
+function decodeXml(value) {
+  return value
+    .replaceAll('&quot;', '"')
+    .replaceAll('&apos;', "'")
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&amp;', '&');
+}

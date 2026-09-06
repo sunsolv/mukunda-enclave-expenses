@@ -21,16 +21,35 @@ describe('DataService financial workflows', () => {
     );
   });
 
+  it('reconciles billed and pending maintenance without counting carried balances twice', () => {
+    expect(data.summary()).toMatchObject({
+      billed: 10500,
+      pending: 7000,
+      paidFlats: 1,
+      partialFlats: 1,
+      pendingFlats: 0,
+      overdueFlats: 2,
+    });
+  });
+
   it('preserves different maintenance amounts for different billing months', async () => {
     await data.generateCharges('2099-07', '2099-07-10', 3100);
     await data.generateCharges('2099-08', '2099-08-10', 3350);
+    await data.generateCharges('2099-09', '2099-09-10', 3600);
 
     const july = data.charges().filter((charge) => charge.billingMonth === '2099-07');
     const august = data.charges().filter((charge) => charge.billingMonth === '2099-08');
+    const september = data.charges().filter((charge) => charge.billingMonth === '2099-09');
     expect(july).toHaveLength(4);
     expect(august).toHaveLength(4);
+    expect(september).toHaveLength(4);
     expect(july.every((charge) => charge.baseAmount === 3100)).toBe(true);
     expect(august.every((charge) => charge.baseAmount === 3350)).toBe(true);
+    expect(september.every((charge) => charge.baseAmount === 3600)).toBe(true);
+    for (const septemberCharge of september) {
+      const augustCharge = august.find((charge) => charge.flatId === septemberCharge.flatId)!;
+      expect(septemberCharge.previousBalance).toBe(augustCharge.balanceAmount);
+    }
   });
 
   it('allocates a verified full payment to its charge', async () => {

@@ -30,6 +30,15 @@ export interface FinancialPosition {
   closingBalance: number;
 }
 
+export interface MaintenanceSummary {
+  billed: number;
+  pending: number;
+  paidFlats: number;
+  partialFlats: number;
+  pendingFlats: number;
+  overdueFlats: number;
+}
+
 const FLAT_LOGIN_ALIASES: Readonly<Record<string, string>> = {
   '101': 'reddyprasadkv',
   '201': 'sandeepg',
@@ -206,6 +215,53 @@ export function buildFinancialPosition(
     collections,
     expenses: periodExpenses,
     closingBalance: openingBalance + collections - periodExpenses,
+  };
+}
+
+export function buildMaintenanceSummary(
+  charges: MaintenanceCharge[],
+  from: string,
+  to: string,
+): MaintenanceSummary {
+  const empty = {
+    billed: 0,
+    pending: 0,
+    paidFlats: 0,
+    partialFlats: 0,
+    pendingFlats: 0,
+    overdueFlats: 0,
+  };
+  if (!from || !to || from > to) return empty;
+
+  const fromMonth = from.slice(0, 7);
+  const toMonth = to.slice(0, 7);
+  const activeCharges = charges.filter(
+    (charge) => charge.status !== 'cancelled' && charge.billingMonth <= toMonth,
+  );
+  const billed = activeCharges
+    .filter((charge) => charge.billingMonth >= fromMonth)
+    .reduce(
+      (sum, charge) =>
+        sum + Math.max(0, charge.baseAmount + charge.lateFee - charge.discount + charge.adjustment),
+      0,
+    );
+
+  const latestByFlat = new Map<string, MaintenanceCharge>();
+  for (const charge of activeCharges) {
+    const latest = latestByFlat.get(charge.flatId);
+    if (!latest || charge.billingMonth > latest.billingMonth) {
+      latestByFlat.set(charge.flatId, charge);
+    }
+  }
+  const latestCharges = [...latestByFlat.values()];
+
+  return {
+    billed,
+    pending: latestCharges.reduce((sum, charge) => sum + charge.balanceAmount, 0),
+    paidFlats: latestCharges.filter((charge) => charge.status === 'paid').length,
+    partialFlats: latestCharges.filter((charge) => charge.status === 'partially_paid').length,
+    pendingFlats: latestCharges.filter((charge) => charge.status === 'unpaid').length,
+    overdueFlats: latestCharges.filter((charge) => charge.status === 'overdue').length,
   };
 }
 

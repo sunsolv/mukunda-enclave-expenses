@@ -84,9 +84,11 @@ import {
           }
         </div>
         @if (cashFlow().collectionTotal === 0 && cashFlow().expenseTotal === 0) {
-          <p class="muted">No verified collections or approved expenses in this period.</p>
+          <p class="muted cash-flow-total">
+            No verified collections or approved expenses in this period.
+          </p>
         } @else {
-          <p class="muted">
+          <p class="muted cash-flow-total">
             {{ money(cashFlow().collectionTotal) }} collected ·
             {{ money(cashFlow().expenseTotal) }} spent
           </p>
